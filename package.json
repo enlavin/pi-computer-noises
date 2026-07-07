@@ -1,13 +1,15 @@
 {
   "name": "popcorn-popper",
   "version": "1.0.0",
-  "description": "Plays a randomized popcorn crackle while the agent is thinking and a microwave ding when it finishes. Works on pi and opencode.",
+  "description": "Agent ambience for pi and opencode: popcorn-popper (microwave drone + pops + ding) and computer-noises (retro mainframe hum + data blips). Each is a single shared instance across all agents.",
   "keywords": ["pi-package", "opencode-plugin"],
   "type": "module",
   "license": "MIT",
   "main": "./plugin/popcorn.ts",
   "exports": {
-    ".": "./plugin/popcorn.ts"
+    ".": "./plugin/popcorn.ts",
+    "./popcorn": "./plugin/popcorn.ts",
+    "./computer-noises": "./plugin/computer-noises.ts"
   },
   "files": ["src", "extensions", "plugin", "assets", "README.md"],
   "pi": {
