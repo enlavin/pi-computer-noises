@@ -1,0 +1,25 @@
+{
+  "name": "popcorn-popper",
+  "version": "1.0.0",
+  "description": "Plays a randomized popcorn crackle while the agent is thinking and a microwave ding when it finishes. Works on pi and opencode.",
+  "keywords": ["pi-package", "opencode-plugin"],
+  "type": "module",
+  "license": "MIT",
+  "main": "./plugin/popcorn.ts",
+  "exports": {
+    ".": "./plugin/popcorn.ts"
+  },
+  "files": ["src", "extensions", "plugin", "assets", "README.md"],
+  "pi": {
+    "extensions": ["extensions"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": { "optional": true }
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "*"
+  }
+}
