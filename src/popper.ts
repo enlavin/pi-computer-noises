@@ -291,8 +291,10 @@ export function createPopper(): Popper {
 		if (ticker) clearInterval(ticker);
 		ticker = undefined;
 		if (stream) {
+			// Kill (don't stdin.end): ending would flush + drain the buffered lead,
+			// so popcorn keeps playing under the ding. Killing drops it immediately.
 			try {
-				stream.stdin?.end();
+				stream.kill("SIGKILL");
 			} catch {
 				// already gone
 			}
