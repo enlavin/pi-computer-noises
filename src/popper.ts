@@ -278,11 +278,12 @@ export function createPopper(): Popper {
 		const t0 = Date.now();
 		let emitted = 0;
 		ticker = setInterval(() => {
-			if (!stream?.stdin.writable) return;
+			const sin = stream?.stdin;
+			if (!sin?.writable) return;
 			const target = Math.floor(((Date.now() - t0) / 1000) * SR) + lead;
 			const n = target - emitted;
 			if (n <= 0) return;
-			stream.stdin.write(mix(n));
+			sin.write(mix(n));
 			emitted = target;
 		}, 20);
 	};
@@ -291,7 +292,7 @@ export function createPopper(): Popper {
 		ticker = undefined;
 		if (stream) {
 			try {
-				stream.stdin.end();
+				stream.stdin?.end();
 			} catch {
 				// already gone
 			}

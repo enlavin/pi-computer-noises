@@ -20,6 +20,8 @@
     "@earendil-works/pi-coding-agent": { "optional": true }
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "*"
+    "@earendil-works/pi-coding-agent": "*",
+    "@opencode-ai/plugin": "*",
+    "@types/node": "*"
   }
 }
