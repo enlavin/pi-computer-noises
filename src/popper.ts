@@ -43,7 +43,12 @@ function bandpass(f0: number, q: number) {
 	const w0 = (2 * Math.PI * f0) / SR;
 	const alpha = Math.sin(w0) / (2 * q);
 	const a0 = 1 + alpha;
-	return { b0: alpha / a0, b2: -alpha / a0, a1: (-2 * Math.cos(w0)) / a0, a2: (1 - alpha) / a0 };
+	return {
+		b0: alpha / a0,
+		b2: -alpha / a0,
+		a1: (-2 * Math.cos(w0)) / a0,
+		a2: (1 - alpha) / a0,
+	};
 }
 
 function synthPop(rand: () => number): Int16Array {
@@ -61,16 +66,27 @@ function synthPop(rand: () => number): Int16Array {
 	const lpA = 1 - Math.exp((-2 * Math.PI * 2400) / SR); // lowpass ~2.4kHz kills hiss
 
 	const out = new Float64Array(n);
-	let bx2 = 0, by1 = 0, by2 = 0, sx2 = 0, sy1 = 0, sy2 = 0, lp = 0, peak = 1e-9;
+	let bx2 = 0,
+		by1 = 0,
+		by2 = 0,
+		sx2 = 0,
+		sy1 = 0,
+		sy2 = 0,
+		lp = 0,
+		peak = 1e-9;
 	const fadeStart = n - Math.floor(SR * 0.002); // 2ms tail fade, no truncation click
 	for (let i = 0; i < n; i++) {
 		const t = i / SR;
 		const wb = rand() * 2 - 1;
 		const ws = rand() * 2 - 1;
 		const yb = bp.b0 * wb + bp.b2 * bx2 - bp.a1 * by1 - bp.a2 * by2;
-		bx2 = wb; by2 = by1; by1 = yb;
+		bx2 = wb;
+		by2 = by1;
+		by1 = yb;
 		const ys = sp.b0 * ws + sp.b2 * sx2 - sp.a1 * sy1 - sp.a2 * sy2;
-		sx2 = ws; sy2 = sy1; sy1 = ys;
+		sx2 = ws;
+		sy2 = sy1;
+		sy1 = ys;
 		const attack = t < atk ? t / atk : 1;
 		const fade = i > fadeStart ? (n - i) / (n - fadeStart) : 1;
 		const raw = yb * Math.exp(-t / bodyTau) + 0.3 * ys * Math.exp(-t / snapTau);
@@ -89,7 +105,8 @@ function synthPop(rand: () => number): Int16Array {
 }
 
 function nextGapMs(streamMs: number): number {
-	const mean = FLOOR_MEAN + (START_MEAN - FLOOR_MEAN) * Math.exp(-streamMs / TAU_MS);
+	const mean =
+		FLOOR_MEAN + (START_MEAN - FLOOR_MEAN) * Math.exp(-streamMs / TAU_MS);
 	return Math.max(MIN_GAP, -mean * Math.log(1 - Math.random()));
 }
 
@@ -99,7 +116,10 @@ function nextGapMs(streamMs: number): number {
 function loadDing(): Int16Array {
 	try {
 		const buf = readFileSync(MICROWAVE);
-		if (buf.toString("ascii", 0, 4) !== "RIFF" || buf.toString("ascii", 8, 12) !== "WAVE")
+		if (
+			buf.toString("ascii", 0, 4) !== "RIFF" ||
+			buf.toString("ascii", 8, 12) !== "WAVE"
+		)
 			return new Int16Array(0);
 		let off = 12;
 		let channels = 1;
@@ -109,7 +129,10 @@ function loadDing(): Int16Array {
 			const size = buf.readUInt32LE(off + 4);
 			const body = off + 8;
 			if (id === "fmt ") channels = buf.readUInt16LE(body + 2);
-			else if (id === "data") { data = buf.subarray(body, Math.min(body + size, buf.length)); break; }
+			else if (id === "data") {
+				data = buf.subarray(body, Math.min(body + size, buf.length));
+				break;
+			}
 			off = body + size + (size & 1); // chunks are word-aligned
 		}
 		if (!data) return new Int16Array(0);
@@ -117,7 +140,8 @@ function loadDing(): Int16Array {
 		if (channels === 2) {
 			const n = total >> 1;
 			const out = new Int16Array(n);
-			for (let i = 0; i < n; i++) out[i] = (data.readInt16LE(i * 4) + data.readInt16LE(i * 4 + 2)) >> 1;
+			for (let i = 0; i < n; i++)
+				out[i] = (data.readInt16LE(i * 4) + data.readInt16LE(i * 4 + 2)) >> 1;
 			return out;
 		}
 		const out = new Int16Array(total);
@@ -161,18 +185,33 @@ function createMixer(
 				0.2 * Math.sin(2 * Math.PI * 120 * t) +
 				0.1 * Math.sin(2 * Math.PI * 180 * t);
 			lpNoise += rumbleA * (Math.random() * 2 - 1 - lpNoise);
-			const whine = 0.06 * (Math.sin(2 * Math.PI * 2550 * t) + Math.sin(2 * Math.PI * 2610 * t));
+			const whine =
+				0.06 *
+				(Math.sin(2 * Math.PI * 2550 * t) + Math.sin(2 * Math.PI * 2610 * t));
 			const lfo = 0.85 + 0.15 * Math.sin(2 * Math.PI * 0.18 * t);
 			env += envA * ((popping ? 1 : 0) - env);
-			acc[i] += (mains * 0.35 + lpNoise * 2.0 + whine) * lfo * env * MICRO_LEVEL * 32767;
+			acc[i] +=
+				(mains * 0.35 + lpNoise * 2.0 + whine) *
+				lfo *
+				env *
+				MICRO_LEVEL *
+				32767;
 		}
 
 		// pops: Poisson schedule while popping, clock reset on the off->on edge.
 		if (popping) {
-			if (!wasPopping) { popClock0 = pos; nextOnset = pos; wasPopping = true; }
+			if (!wasPopping) {
+				popClock0 = pos;
+				nextOnset = pos;
+				wasPopping = true;
+			}
 			while (nextOnset < end) {
-				voices.push({ s: pops[Math.floor(Math.random() * pops.length)], start: Math.round(nextOnset) });
-				nextOnset += (nextGapMs(((nextOnset - popClock0) / SR) * 1000) / 1000) * SR;
+				voices.push({
+					s: pops[Math.floor(Math.random() * pops.length)],
+					start: Math.round(nextOnset),
+				});
+				nextOnset +=
+					(nextGapMs(((nextOnset - popClock0) / SR) * 1000) / 1000) * SR;
 			}
 		} else {
 			wasPopping = false;
@@ -198,10 +237,67 @@ function createMixer(
 
 // ---- portable raw-PCM streaming player -------------------------------------
 const RAW_PLAYERS: Array<{ cmd: string; args: string[] }> = [
-	{ cmd: "pacat", args: ["--playback", "--rate", String(SR), "--channels", "1", "--format", "s16le", "--latency-msec", "40"] },
-	{ cmd: "pw-cat", args: ["--playback", "--rate", String(SR), "--channels", "1", "--format", "s16", "-"] },
-	{ cmd: "ffplay", args: ["-f", "s16le", "-ar", String(SR), "-ch_layout", "mono", "-nodisp", "-autoexit", "-loglevel", "quiet", "-i", "-"] },
-	{ cmd: "play", args: ["-q", "-t", "raw", "-r", String(SR), "-e", "signed", "-b", "16", "-c", "1", "-"] },
+	{
+		cmd: "pacat",
+		args: [
+			"--playback",
+			"--rate",
+			String(SR),
+			"--channels",
+			"1",
+			"--format",
+			"s16le",
+			"--latency-msec",
+			"40",
+		],
+	},
+	{
+		cmd: "pw-cat",
+		args: [
+			"--playback",
+			"--rate",
+			String(SR),
+			"--channels",
+			"1",
+			"--format",
+			"s16",
+			"-",
+		],
+	},
+	{
+		cmd: "ffplay",
+		args: [
+			"-f",
+			"s16le",
+			"-ar",
+			String(SR),
+			"-ch_layout",
+			"mono",
+			"-nodisp",
+			"-autoexit",
+			"-loglevel",
+			"quiet",
+			"-i",
+			"-",
+		],
+	},
+	{
+		cmd: "play",
+		args: [
+			"-q",
+			"-t",
+			"raw",
+			"-r",
+			String(SR),
+			"-e",
+			"signed",
+			"-b",
+			"16",
+			"-c",
+			"1",
+			"-",
+		],
+	},
 ];
 
 function detectRawPlayer(): { cmd: string; args: string[] } | undefined {
@@ -238,32 +334,61 @@ function createPumpEngine(): Pump {
 
 	const spawnPlayer = () => {
 		if (!rawPlayer || stream) return;
-		const proc = spawn(rawPlayer.cmd, rawPlayer.args, { stdio: ["pipe", "ignore", "ignore"] });
-		const gone = () => { if (stream === proc) { stream = undefined; running = false; } };
+		const proc = spawn(rawPlayer.cmd, rawPlayer.args, {
+			stdio: ["pipe", "ignore", "ignore"],
+		});
+		const gone = () => {
+			if (stream === proc) {
+				stream = undefined;
+				running = false;
+			}
+		};
 		proc.on("error", gone);
 		proc.on("exit", gone);
 		proc.stdin.on("error", () => {}); // ignore EPIPE if the player dies
 		stream = proc;
 		running = true;
-		const mix = createMixer(pops, ding, () => on, () => {
-			if (pendingDing) { pendingDing = false; return true; }
-			return false;
-		});
+		const mix = createMixer(
+			pops,
+			ding,
+			() => on,
+			() => {
+				if (pendingDing) {
+					pendingDing = false;
+					return true;
+				}
+				return false;
+			},
+		);
 		const LEAD = Math.floor(SR * 0.1);
 		const STEP = Math.floor(SR * 0.02);
-		const t0 = Date.now();
+		let t0 = Date.now(); // wall-clock baseline; rebased after sink backpressure
 		let written = 0;
+		let draining = false; // sink couldn't keep up -> pace from sink, not wall clock
+		const rebase = () => {
+			t0 = Date.now() - (written / SR) * 1000;
+		}; // realign target to where the sink is
 		const tick = () => {
 			if (!running) return;
 			const sin = stream?.stdin;
-			if (sin?.writable) {
+			if (sin?.writable && !draining) {
 				const target = Math.floor(((Date.now() - t0) / 1000) * SR) + LEAD;
-				if (target - written > 2 * LEAD) written = target - LEAD; // drop-to-realtime
+				// Drop-to-realtime: only on a true pump stall (lag WITHOUT backpressure).
+				// Sink-slow lag is handled by the drain handler rebasing t0, not by skipping.
+				if (target - written > 2 * LEAD) written = target - LEAD;
 				const render = on || Date.now() < dingUntil;
 				while (running && written < target) {
 					const n = Math.min(STEP, target - written);
-					sin.write(render ? mix(n) : Buffer.alloc(n * 2)); // silence keeps stream warm
-					written += n;
+					const ok = sin.write(render ? mix(n) : Buffer.alloc(n * 2)); // silence keeps stream warm
+					written += n; // data is queued even when ok=false (over highWaterMark)
+					if (!ok) {
+						draining = true;
+						sin.once("drain", () => {
+							draining = false;
+							rebase();
+						});
+						break;
+					}
 				}
 			}
 			timer = setTimeout(tick, 10);
@@ -272,8 +397,13 @@ function createPumpEngine(): Pump {
 	};
 
 	return {
-		warm() { spawnPlayer(); },
-		active(next: boolean) { spawnPlayer(); on = next; },
+		warm() {
+			spawnPlayer();
+		},
+		active(next: boolean) {
+			spawnPlayer();
+			on = next;
+		},
 		ding() {
 			if (!ding.length) return;
 			pendingDing = true;
@@ -284,9 +414,16 @@ function createPumpEngine(): Pump {
 			on = false;
 			dingUntil = 0;
 			pendingDing = false;
-			if (timer) { clearTimeout(timer); timer = undefined; }
+			if (timer) {
+				clearTimeout(timer);
+				timer = undefined;
+			}
 			if (stream) {
-				try { stream.kill("SIGKILL"); } catch { /* already gone */ }
+				try {
+					stream.kill("SIGKILL");
+				} catch {
+					/* already gone */
+				}
 				stream = undefined;
 			}
 		},
@@ -302,7 +439,10 @@ if (!isMainThread && parentPort) {
 		else if (m === "on") engine.active(true);
 		else if (m === "off") engine.active(false);
 		else if (m === "ding") engine.ding();
-		else if (m === "shutdown") { engine.shutdown(); process.exit(0); }
+		else if (m === "shutdown") {
+			engine.shutdown();
+			process.exit(0);
+		}
 	});
 }
 
@@ -310,13 +450,21 @@ function createLocalPump(): Pump {
 	let worker: Worker | undefined;
 	try {
 		worker = new Worker(new URL(import.meta.url));
-		worker.on("error", () => { worker = undefined; });
+		worker.on("error", () => {
+			worker = undefined;
+		});
 	} catch {
 		worker = undefined;
 	}
 	if (worker) {
 		const w = worker;
-		const post = (m: string) => { try { w.postMessage(m); } catch { /* worker gone */ } };
+		const post = (m: string) => {
+			try {
+				w.postMessage(m);
+			} catch {
+				/* worker gone */
+			}
+		};
 		// No terminate() on exit: it orphans the pacat child. Process teardown
 		// closes the stdin pipe -> pacat EOFs on its own.
 		return {
@@ -337,7 +485,10 @@ function createLocalPump(): Pump {
 // rebinds an occupied unix path, so it can't be the lock). The owner runs the
 // pump; other instances are silent clients streaming start/stop. Refcount active
 // turns: drone+pops while ANY instance is mid-turn, ding when the LAST ends.
-const SOCK_PATH = join(process.env.XDG_RUNTIME_DIR || tmpdir(), "popcorn-popper.sock");
+const SOCK_PATH = join(
+	process.env.XDG_RUNTIME_DIR || tmpdir(),
+	"popcorn-popper.sock",
+);
 const LOCK_PATH = SOCK_PATH + ".lock";
 
 export interface Popper {
@@ -356,11 +507,15 @@ export function createPopper(): Popper {
 		let activeCount = 0;
 		let selfCounted = false;
 		let wasActive = false;
-		if (process.env.POP_DEBUG) console.error(`[owner] elected pid=${process.pid}`);
+		if (process.env.POP_DEBUG)
+			console.error(`[owner] elected pid=${process.pid}`);
 		const apply = () => {
 			const nowActive = activeCount > 0;
 			if (nowActive && !wasActive) pump.active(true);
-			else if (!nowActive && wasActive) { pump.active(false); pump.ding(); } // ding on the last stop
+			else if (!nowActive && wasActive) {
+				pump.active(false);
+				pump.ding();
+			} // ding on the last stop
 			wasActive = nowActive;
 			if (process.env.POP_DEBUG) console.error(`[owner] active=${activeCount}`);
 		};
@@ -376,40 +531,101 @@ export function createPopper(): Popper {
 				while ((i = buf.indexOf("\n")) >= 0) {
 					const m = buf.slice(0, i);
 					buf = buf.slice(i + 1);
-					if (m === "start") { if (!cactive) { cactive = true; activeCount++; apply(); } }
-					else if (m === "stop") { if (cactive) { cactive = false; activeCount--; apply(); } }
+					if (m === "start") {
+						if (!cactive) {
+							cactive = true;
+							activeCount++;
+							apply();
+						}
+					} else if (m === "stop") {
+						if (cactive) {
+							cactive = false;
+							activeCount--;
+							apply();
+						}
+					}
 				}
 			});
 			const drop = () => {
 				if (!conns.delete(sock)) return;
-				if (cactive) { cactive = false; activeCount--; apply(); }
+				if (cactive) {
+					cactive = false;
+					activeCount--;
+					apply();
+				}
 			};
 			sock.on("close", drop);
 			sock.on("error", () => {});
 		});
 		server.on("error", () => {});
 		pump.warm();
-		if (selfActive) { selfCounted = true; activeCount++; }
+		if (selfActive) {
+			selfCounted = true;
+			activeCount++;
+		}
 		apply();
 		role = {
-			start: () => { if (!selfCounted) { selfCounted = true; activeCount++; apply(); } },
-			stop: () => { if (selfCounted) { selfCounted = false; activeCount--; apply(); } },
+			start: () => {
+				if (!selfCounted) {
+					selfCounted = true;
+					activeCount++;
+					apply();
+				}
+			},
+			stop: () => {
+				if (selfCounted) {
+					selfCounted = false;
+					activeCount--;
+					apply();
+				}
+			},
 		};
 		teardown = () => {
-			try { server.close(); } catch { /* not listening */ }
-			for (const s of conns) { try { s.destroy(); } catch { /* gone */ } }
-			try { unlinkSync(SOCK_PATH); } catch { /* already gone */ }
-			try { unlinkSync(LOCK_PATH); } catch { /* already gone */ }
+			try {
+				server.close();
+			} catch {
+				/* not listening */
+			}
+			for (const s of conns) {
+				try {
+					s.destroy();
+				} catch {
+					/* gone */
+				}
+			}
+			try {
+				unlinkSync(SOCK_PATH);
+			} catch {
+				/* already gone */
+			}
+			try {
+				unlinkSync(LOCK_PATH);
+			} catch {
+				/* already gone */
+			}
 			pump.shutdown();
 		};
 	};
 
 	const becomeClient = (sock: Socket) => {
-		const send = (m: string) => { try { sock.write(m + "\n"); } catch { /* broken pipe */ } };
-		if (process.env.POP_DEBUG) console.error(`[client] connected pid=${process.pid}`);
+		const send = (m: string) => {
+			try {
+				sock.write(m + "\n");
+			} catch {
+				/* broken pipe */
+			}
+		};
+		if (process.env.POP_DEBUG)
+			console.error(`[client] connected pid=${process.pid}`);
 		if (selfActive) send("start"); // announce current state to the (new) owner
 		role = { start: () => send("start"), stop: () => send("stop") };
-		teardown = () => { try { sock.destroy(); } catch { /* gone */ } };
+		teardown = () => {
+			try {
+				sock.destroy();
+			} catch {
+				/* gone */
+			}
+		};
 		const reElect = () => {
 			if (disposed) return;
 			role = { start() {}, stop() {} }; // silent until re-elected
@@ -426,7 +642,10 @@ export function createPopper(): Popper {
 		pump.warm();
 		const apply = () => {
 			if (selfActive && !wasActive) pump.active(true);
-			else if (!selfActive && wasActive) { pump.active(false); pump.ding(); }
+			else if (!selfActive && wasActive) {
+				pump.active(false);
+				pump.ding();
+			}
 			wasActive = selfActive;
 		};
 		if (selfActive) apply();
@@ -435,7 +654,12 @@ export function createPopper(): Popper {
 	};
 
 	const isAlive = (pid: number) => {
-		try { process.kill(pid, 0); return true; } catch (e) { return (e as { code?: string }).code === "EPERM"; }
+		try {
+			process.kill(pid, 0);
+			return true;
+		} catch (e) {
+			return (e as { code?: string }).code === "EPERM";
+		}
 	};
 
 	const tryOwn = () => {
@@ -443,15 +667,35 @@ export function createPopper(): Popper {
 		try {
 			writeFileSync(LOCK_PATH, String(process.pid), { flag: "wx" }); // atomic: EEXIST if held
 		} catch (e) {
-			if ((e as { code?: string }).code !== "EEXIST") { becomeOwnerLocalOnly(); return; }
+			if ((e as { code?: string }).code !== "EEXIST") {
+				becomeOwnerLocalOnly();
+				return;
+			}
 			const pid = Number(readFileSync(LOCK_PATH, "utf8")) || 0;
-			if (!pid || !isAlive(pid)) { try { unlinkSync(LOCK_PATH); } catch { /* raced */ } }
+			if (!pid || !isAlive(pid)) {
+				try {
+					unlinkSync(LOCK_PATH);
+				} catch {
+					/* raced */
+				}
+			}
 			setTimeout(elect, 40 + Math.random() * 80);
 			return;
 		}
-		try { unlinkSync(SOCK_PATH); } catch { /* no stale socket */ }
+		try {
+			unlinkSync(SOCK_PATH);
+		} catch {
+			/* no stale socket */
+		}
 		const server = createServer();
-		server.once("error", () => { try { unlinkSync(LOCK_PATH); } catch { /* gone */ } becomeOwnerLocalOnly(); });
+		server.once("error", () => {
+			try {
+				unlinkSync(LOCK_PATH);
+			} catch {
+				/* gone */
+			}
+			becomeOwnerLocalOnly();
+		});
 		server.listen(SOCK_PATH, () => becomeOwner(server));
 	};
 
@@ -461,16 +705,28 @@ export function createPopper(): Popper {
 		// race for the O_EXCL lock, and the winner listens.
 		const probe = connect(SOCK_PATH);
 		const onErr = () => tryOwn();
-		probe.once("connect", () => { probe.removeListener("error", onErr); becomeClient(probe); });
+		probe.once("connect", () => {
+			probe.removeListener("error", onErr);
+			becomeClient(probe);
+		});
 		probe.once("error", onErr);
 	};
 
 	elect();
-	process.once("exit", () => { disposed = true; teardown(); });
+	process.once("exit", () => {
+		disposed = true;
+		teardown();
+	});
 
 	return {
-		start: () => { selfActive = true; role.start(); },
-		stop: () => { selfActive = false; role.stop(); },
+		start: () => {
+			selfActive = true;
+			role.start();
+		},
+		stop: () => {
+			selfActive = false;
+			role.stop();
+		},
 	};
 }
 
@@ -480,20 +736,39 @@ if (import.meta.main && isMainThread) {
 	if (mode === "--check") {
 		const p = synthPop(Math.random);
 		console.assert(p.length === Math.floor(SR * 0.06), "pop length");
-		console.assert(p.some((v) => v !== 0), "pop not silent");
-		console.assert(p.every((v) => v >= -32768 && v <= 32767), "pop in int16 range");
+		console.assert(
+			p.some((v) => v !== 0),
+			"pop not silent",
+		);
+		console.assert(
+			p.every((v) => v >= -32768 && v <= 32767),
+			"pop in int16 range",
+		);
 		const ding = loadDing();
 		console.assert(ding.length > 0, "ding decoded");
 		let popping = true;
-		const mix = createMixer([p], ding, () => popping, () => false);
+		const mix = createMixer(
+			[p],
+			ding,
+			() => popping,
+			() => false,
+		);
 		const chunk = mix(4410);
 		console.assert(chunk.length === 8820, "mixer emits 2 bytes/sample");
-		console.assert(chunk.some((_, i) => i % 2 === 0 && chunk.readInt16LE(i) !== 0), "drone/pops audible while popping");
+		console.assert(
+			chunk.some((_, i) => i % 2 === 0 && chunk.readInt16LE(i) !== 0),
+			"drone/pops audible while popping",
+		);
 		popping = false;
-		let g = 0; const gaps: number[] = [];
+		const g = 0;
+		const gaps: number[] = [];
 		for (let i = 0; i < 200; i++) gaps.push(nextGapMs(g));
-		console.assert(gaps.every((x) => x >= MIN_GAP), "gaps respect MIN_GAP");
-		if (!detectRawPlayer()) console.warn("no raw player found (pacat/pw-cat/ffplay/play)");
+		console.assert(
+			gaps.every((x) => x >= MIN_GAP),
+			"gaps respect MIN_GAP",
+		);
+		if (!detectRawPlayer())
+			console.warn("no raw player found (pacat/pw-cat/ffplay/play)");
 		console.log("ok");
 	} else if (mode === "--coord") {
 		const pop = createPopper();
@@ -511,8 +786,19 @@ if (import.meta.main && isMainThread) {
 		pump.warm();
 		pump.active(true);
 		const secs = Number(process.argv[3] ?? 8);
-		console.log(`auditioning ~${secs}s: microwave drone + accelerating pops, then the ding...`);
-		setTimeout(() => { pump.active(false); pump.ding(); }, secs * 1000);
-		setTimeout(() => { pump.shutdown(); process.exit(0); }, (secs + 5) * 1000);
+		console.log(
+			`auditioning ~${secs}s: microwave drone + accelerating pops, then the ding...`,
+		);
+		setTimeout(() => {
+			pump.active(false);
+			pump.ding();
+		}, secs * 1000);
+		setTimeout(
+			() => {
+				pump.shutdown();
+				process.exit(0);
+			},
+			(secs + 5) * 1000,
+		);
 	}
 }

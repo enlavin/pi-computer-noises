@@ -62,13 +62,21 @@ function synthTone(f: number, dur: number, amp: number): Int16Array {
 
 // Data blips: bright, near-uniform pitch (SCALE), the streaming "processing" sound.
 function synthBlip(rand: () => number): Int16Array {
-	return synthTone(SCALE[Math.floor(rand() * SCALE.length)], 0.026 + rand() * 0.01, 0.066 + rand() * 0.01);
+	return synthTone(
+		SCALE[Math.floor(rand() * SCALE.length)],
+		0.026 + rand() * 0.01,
+		0.066 + rand() * 0.01,
+	);
 }
 
 // Ambient server-room beeps: sparse, faint, spread across octaves (different "devices").
 const AMBIENT_SCALE = [523, 784, 1046, 1568, 2093, 2637];
 function synthAmbient(rand: () => number): Int16Array {
-	return synthTone(AMBIENT_SCALE[Math.floor(rand() * AMBIENT_SCALE.length)], 0.05 + rand() * 0.06, 0.014 + rand() * 0.01);
+	return synthTone(
+		AMBIENT_SCALE[Math.floor(rand() * AMBIENT_SCALE.length)],
+		0.05 + rand() * 0.06,
+		0.014 + rand() * 0.01,
+	);
 }
 
 // ---- timing: a stream of blips with occasional pauses ----------------------
@@ -79,7 +87,11 @@ const HUM_LEVEL = 0.055; // mainframe hum bed, sits just under the blips
 // Mixer renders a continuous mainframe hum every chunk, plus data blips only
 // while blipsOn() is true. The hum fills the silence gaps (post-request wait,
 // between blip windows, tool waits); blips overlay during active streaming.
-function createMixer(blips: Int16Array[], ambients: Int16Array[], blipsOn: () => boolean): (n: number) => Buffer {
+function createMixer(
+	blips: Int16Array[],
+	ambients: Int16Array[],
+	blipsOn: () => boolean,
+): (n: number) => Buffer {
 	let pos = 0;
 	let nextOnset = 0;
 	let active: Array<{ s: Int16Array; start: number }> = [];
@@ -90,9 +102,13 @@ function createMixer(blips: Int16Array[], ambients: Int16Array[], blipsOn: () =>
 
 	const pickNext = (): { s: Int16Array; gap: number } => {
 		let ms: number;
-		if (Math.random() < 0.03) ms = 120 + Math.random() * 120; // rare brief pause
+		if (Math.random() < 0.03)
+			ms = 120 + Math.random() * 120; // rare brief pause
 		else ms = GAP_BASE + (Math.random() - 0.5) * 2 * GAP_JITTER; // tight uniform jitter
-		return { s: blips[Math.floor(Math.random() * blips.length)], gap: (ms / 1000) * SR };
+		return {
+			s: blips[Math.floor(Math.random() * blips.length)],
+			gap: (ms / 1000) * SR,
+		};
 	};
 
 	return (n: number): Buffer => {
@@ -125,7 +141,10 @@ function createMixer(blips: Int16Array[], ambients: Int16Array[], blipsOn: () =>
 		}
 		// ambient server-room beeps: sparse + faint, always on with the hum
 		while (nextAmbient < end) {
-			active.push({ s: ambients[Math.floor(Math.random() * ambients.length)], start: Math.round(nextAmbient) });
+			active.push({
+				s: ambients[Math.floor(Math.random() * ambients.length)],
+				start: Math.round(nextAmbient),
+			});
 			nextAmbient += ambientGap();
 		}
 		for (const p of active) {
@@ -146,10 +165,67 @@ function createMixer(blips: Int16Array[], ambients: Int16Array[], blipsOn: () =>
 
 // ---- portable raw-PCM streaming player -------------------------------------
 const RAW_PLAYERS: Array<{ cmd: string; args: string[] }> = [
-	{ cmd: "pacat", args: ["--playback", "--rate", String(SR), "--channels", "1", "--format", "s16le", "--latency-msec", "40"] },
-	{ cmd: "pw-cat", args: ["--playback", "--rate", String(SR), "--channels", "1", "--format", "s16", "-"] },
-	{ cmd: "ffplay", args: ["-f", "s16le", "-ar", String(SR), "-ch_layout", "mono", "-nodisp", "-autoexit", "-loglevel", "quiet", "-i", "-"] },
-	{ cmd: "play", args: ["-q", "-t", "raw", "-r", String(SR), "-e", "signed", "-b", "16", "-c", "1", "-"] },
+	{
+		cmd: "pacat",
+		args: [
+			"--playback",
+			"--rate",
+			String(SR),
+			"--channels",
+			"1",
+			"--format",
+			"s16le",
+			"--latency-msec",
+			"40",
+		],
+	},
+	{
+		cmd: "pw-cat",
+		args: [
+			"--playback",
+			"--rate",
+			String(SR),
+			"--channels",
+			"1",
+			"--format",
+			"s16",
+			"-",
+		],
+	},
+	{
+		cmd: "ffplay",
+		args: [
+			"-f",
+			"s16le",
+			"-ar",
+			String(SR),
+			"-ch_layout",
+			"mono",
+			"-nodisp",
+			"-autoexit",
+			"-loglevel",
+			"quiet",
+			"-i",
+			"-",
+		],
+	},
+	{
+		cmd: "play",
+		args: [
+			"-q",
+			"-t",
+			"raw",
+			"-r",
+			String(SR),
+			"-e",
+			"signed",
+			"-b",
+			"16",
+			"-c",
+			"1",
+			"-",
+		],
+	},
 ];
 
 function detectRawPlayer(): { cmd: string; args: string[] } | undefined {
@@ -187,7 +263,9 @@ interface PumpEngine {
 function createPumpEngine(): PumpEngine {
 	const rawPlayer = detectRawPlayer();
 	const blips = Array.from({ length: VARIANTS }, () => synthBlip(Math.random));
-	const ambients = Array.from({ length: AMBIENT_SCALE.length }, () => synthAmbient(Math.random));
+	const ambients = Array.from({ length: AMBIENT_SCALE.length }, () =>
+		synthAmbient(Math.random),
+	);
 
 	let stream: ChildProcess | undefined;
 	let running = false; // tick loop alive → RDP stream stays open (warm)
@@ -201,8 +279,15 @@ function createPumpEngine(): PumpEngine {
 	// pays that cost once; turns then start within the LEAD buffer.
 	const spawnPlayer = () => {
 		if (!rawPlayer || stream) return;
-		const proc = spawn(rawPlayer.cmd, rawPlayer.args, { stdio: ["pipe", "ignore", "ignore"] });
-		const gone = () => { if (stream === proc) { stream = undefined; running = false; } };
+		const proc = spawn(rawPlayer.cmd, rawPlayer.args, {
+			stdio: ["pipe", "ignore", "ignore"],
+		});
+		const gone = () => {
+			if (stream === proc) {
+				stream = undefined;
+				running = false;
+			}
+		};
 		proc.on("error", gone);
 		proc.on("exit", gone);
 		proc.stdin.on("error", () => {}); // ignore EPIPE if the player dies
@@ -213,21 +298,32 @@ function createPumpEngine(): PumpEngine {
 		// loop this stays glitch-free low; LEAD is the onset floor and the variance.
 		const LEAD = Math.floor(SR * 0.1);
 		const STEP = Math.floor(SR * 0.02); // <=20ms per write
-		const t0 = Date.now();
+		let t0 = Date.now(); // wall-clock baseline; rebased after sink backpressure
 		let written = 0;
+		let draining = false; // sink couldn't keep up -> pace from sink, not wall clock
+		const rebase = () => {
+			t0 = Date.now() - (written / SR) * 1000;
+		}; // realign target to where the sink is
 		const tick = () => {
 			if (!running) return;
 			const sin = stream?.stdin;
-			if (sin?.writable) {
+			if (sin?.writable && !draining) {
 				const target = Math.floor(((Date.now() - t0) / 1000) * SR) + LEAD;
-				// Drop-to-realtime: if we fell far behind (a stall), skip the stale gap
-				// instead of writing a catch-up burst. That burst is what left a long,
-				// variable tail of beeps playing after the turn had already ended.
+				// Drop-to-realtime: only on a true pump stall (lag WITHOUT backpressure).
+				// Sink-slow lag is handled by the drain handler rebasing t0, not by skipping.
 				if (target - written > 2 * LEAD) written = target - LEAD;
 				while (running && written < target) {
 					const n = Math.min(STEP, target - written);
-					sin.write(on ? mix(n) : Buffer.alloc(n * 2)); // silence keeps stream warm
-					written += n;
+					const ok = sin.write(on ? mix(n) : Buffer.alloc(n * 2)); // silence keeps stream warm
+					written += n; // data is queued even when ok=false (over highWaterMark)
+					if (!ok) {
+						draining = true;
+						sin.once("drain", () => {
+							draining = false;
+							rebase();
+						});
+						break;
+					}
 				}
 			}
 			timer = setTimeout(tick, 10);
@@ -251,9 +347,16 @@ function createPumpEngine(): PumpEngine {
 			running = false;
 			on = false;
 			blipsUntil = 0;
-			if (timer) { clearTimeout(timer); timer = undefined; }
+			if (timer) {
+				clearTimeout(timer);
+				timer = undefined;
+			}
 			if (stream) {
-				try { stream.kill("SIGKILL"); } catch { /* already gone */ }
+				try {
+					stream.kill("SIGKILL");
+				} catch {
+					/* already gone */
+				}
 				stream = undefined;
 			}
 		},
@@ -271,7 +374,10 @@ if (!isMainThread && parentPort) {
 		else if (m === "start") engine.active(true);
 		else if (m === "poke") engine.poke();
 		else if (m === "stop") engine.active(false);
-		else if (m === "shutdown") { engine.shutdown(); process.exit(0); }
+		else if (m === "shutdown") {
+			engine.shutdown();
+			process.exit(0);
+		}
 	});
 }
 
@@ -281,13 +387,21 @@ function createLocalPump(): Mainframe {
 	let worker: Worker | undefined;
 	try {
 		worker = new Worker(new URL(import.meta.url));
-		worker.on("error", () => { worker = undefined; });
+		worker.on("error", () => {
+			worker = undefined;
+		});
 	} catch {
 		worker = undefined;
 	}
 	if (worker) {
 		const w = worker;
-		const post = (m: string) => { try { w.postMessage(m); } catch { /* worker gone */ } };
+		const post = (m: string) => {
+			try {
+				w.postMessage(m);
+			} catch {
+				/* worker gone */
+			}
+		};
 		// No terminate() on exit: that stops the thread without reaping its pacat
 		// child (orphan). Normal process teardown closes the stdin pipe → pacat EOFs.
 		return {
@@ -318,13 +432,20 @@ function createLocalPump(): Mainframe {
 // instances — hum plays while ANY instance is mid-turn and stops when the last
 // turn ends. Own socket name (not the standalone extension's) so a repo install
 // and a globally-installed original never clash.
-const SOCK_PATH = join(process.env.XDG_RUNTIME_DIR || tmpdir(), "computer-noises.sock");
+const SOCK_PATH = join(
+	process.env.XDG_RUNTIME_DIR || tmpdir(),
+	"computer-noises.sock",
+);
 const LOCK_PATH = SOCK_PATH + ".lock";
 
 export function createMainframe(): Mainframe {
 	let selfActive = false; // is THIS instance mid-turn (source of truth across roles)
 	let disposed = false;
-	let role: { start(): void; poke(): void; stop(): void } = { start() {}, poke() {}, stop() {} };
+	let role: { start(): void; poke(): void; stop(): void } = {
+		start() {},
+		poke() {},
+		stop() {},
+	};
 	let teardown = () => {};
 
 	const becomeOwner = (server: Server) => {
@@ -332,7 +453,8 @@ export function createMainframe(): Mainframe {
 		let activeCount = 0;
 		let selfCounted = false;
 		const apply = () => (activeCount > 0 ? pump.start() : pump.stop());
-		if (process.env.CN_DEBUG) console.error(`[owner] elected pid=${process.pid}`);
+		if (process.env.CN_DEBUG)
+			console.error(`[owner] elected pid=${process.pid}`);
 		const conns = new Set<Socket>();
 		server.on("connection", (sock: Socket) => {
 			conns.add(sock);
@@ -345,43 +467,117 @@ export function createMainframe(): Mainframe {
 				while ((i = buf.indexOf("\n")) >= 0) {
 					const m = buf.slice(0, i);
 					buf = buf.slice(i + 1);
-					if (m === "start") { if (!cactive) { cactive = true; activeCount++; apply(); if (process.env.CN_DEBUG) console.error(`[owner] active=${activeCount}`); } }
-					else if (m === "stop") { if (cactive) { cactive = false; activeCount--; apply(); if (process.env.CN_DEBUG) console.error(`[owner] active=${activeCount}`); } }
-					else if (m === "poke") pump.poke();
+					if (m === "start") {
+						if (!cactive) {
+							cactive = true;
+							activeCount++;
+							apply();
+							if (process.env.CN_DEBUG)
+								console.error(`[owner] active=${activeCount}`);
+						}
+					} else if (m === "stop") {
+						if (cactive) {
+							cactive = false;
+							activeCount--;
+							apply();
+							if (process.env.CN_DEBUG)
+								console.error(`[owner] active=${activeCount}`);
+						}
+					} else if (m === "poke") pump.poke();
 				}
 			});
 			const drop = () => {
 				if (!conns.delete(sock)) return;
-				if (cactive) { cactive = false; activeCount--; apply(); if (process.env.CN_DEBUG) console.error(`[owner] active=${activeCount}`); }
+				if (cactive) {
+					cactive = false;
+					activeCount--;
+					apply();
+					if (process.env.CN_DEBUG)
+						console.error(`[owner] active=${activeCount}`);
+				}
 			};
 			sock.on("close", drop);
 			sock.on("error", () => {}); // 'close' follows
 		});
 		server.on("error", () => {}); // runtime errors after listen: keep the pump
-		if (selfActive) { selfCounted = true; activeCount++; }
+		if (selfActive) {
+			selfCounted = true;
+			activeCount++;
+		}
 		pump.warm();
 		apply();
 		if (process.env.CN_DEBUG) console.error(`[owner] active=${activeCount}`);
 		role = {
-			start: () => { if (!selfCounted) { selfCounted = true; activeCount++; apply(); if (process.env.CN_DEBUG) console.error(`[owner] active=${activeCount}`); } },
-			stop: () => { if (selfCounted) { selfCounted = false; activeCount--; apply(); if (process.env.CN_DEBUG) console.error(`[owner] active=${activeCount}`); } },
+			start: () => {
+				if (!selfCounted) {
+					selfCounted = true;
+					activeCount++;
+					apply();
+					if (process.env.CN_DEBUG)
+						console.error(`[owner] active=${activeCount}`);
+				}
+			},
+			stop: () => {
+				if (selfCounted) {
+					selfCounted = false;
+					activeCount--;
+					apply();
+					if (process.env.CN_DEBUG)
+						console.error(`[owner] active=${activeCount}`);
+				}
+			},
 			poke: () => pump.poke(),
 		};
 		teardown = () => {
-			try { server.close(); } catch { /* not listening */ }
-			for (const s of conns) { try { s.destroy(); } catch { /* gone */ } }
-			try { unlinkSync(SOCK_PATH); } catch { /* already gone */ }
-			try { unlinkSync(LOCK_PATH); } catch { /* already gone */ }
+			try {
+				server.close();
+			} catch {
+				/* not listening */
+			}
+			for (const s of conns) {
+				try {
+					s.destroy();
+				} catch {
+					/* gone */
+				}
+			}
+			try {
+				unlinkSync(SOCK_PATH);
+			} catch {
+				/* already gone */
+			}
+			try {
+				unlinkSync(LOCK_PATH);
+			} catch {
+				/* already gone */
+			}
 			pump.shutdown();
 		};
 	};
 
 	const becomeClient = (sock: Socket) => {
-		const send = (m: string) => { try { sock.write(m + "\n"); } catch { /* broken pipe */ } };
-		if (process.env.CN_DEBUG) console.error(`[client] connected pid=${process.pid}`);
+		const send = (m: string) => {
+			try {
+				sock.write(m + "\n");
+			} catch {
+				/* broken pipe */
+			}
+		};
+		if (process.env.CN_DEBUG)
+			console.error(`[client] connected pid=${process.pid}`);
 		if (selfActive) send("start"); // announce current state to the (new) owner
-		role = { start: () => send("start"), stop: () => send("stop"), poke: () => send("poke") };
-		teardown = () => { try { sock.destroy(); } catch { /* gone */ } };
+		role = {
+			start: () => send("start"),
+			stop: () => send("stop"),
+			poke: () => send("poke"),
+		};
+		teardown = () => {
+			try {
+				sock.destroy();
+			} catch {
+				/* gone */
+			}
+		};
 		const reElect = () => {
 			if (disposed) return;
 			role = { start() {}, poke() {}, stop() {} }; // silent until re-elected
@@ -397,12 +593,21 @@ export function createMainframe(): Mainframe {
 		const pump = createLocalPump();
 		pump.warm();
 		if (selfActive) pump.start();
-		role = { start: () => pump.start(), stop: () => pump.stop(), poke: () => pump.poke() };
+		role = {
+			start: () => pump.start(),
+			stop: () => pump.stop(),
+			poke: () => pump.poke(),
+		};
 		teardown = () => pump.shutdown();
 	};
 
 	const isAlive = (pid: number) => {
-		try { process.kill(pid, 0); return true; } catch (e) { return (e as { code?: string }).code === "EPERM"; }
+		try {
+			process.kill(pid, 0);
+			return true;
+		} catch (e) {
+			return (e as { code?: string }).code === "EPERM";
+		}
 	};
 
 	const tryOwn = () => {
@@ -410,17 +615,37 @@ export function createMainframe(): Mainframe {
 		try {
 			writeFileSync(LOCK_PATH, String(process.pid), { flag: "wx" }); // atomic: EEXIST if held
 		} catch (e) {
-			if ((e as { code?: string }).code !== "EEXIST") { becomeOwnerLocalOnly(); return; }
+			if ((e as { code?: string }).code !== "EEXIST") {
+				becomeOwnerLocalOnly();
+				return;
+			}
 			// lock held: live owner (up or starting) → retry-connect soon; dead pid →
 			// break the stale lock. The atomic wx create still serializes the winner.
 			const pid = Number(readFileSync(LOCK_PATH, "utf8")) || 0;
-			if (!pid || !isAlive(pid)) { try { unlinkSync(LOCK_PATH); } catch { /* raced */ } }
+			if (!pid || !isAlive(pid)) {
+				try {
+					unlinkSync(LOCK_PATH);
+				} catch {
+					/* raced */
+				}
+			}
 			setTimeout(elect, 40 + Math.random() * 80);
 			return;
 		}
-		try { unlinkSync(SOCK_PATH); } catch { /* no stale socket */ } // bun won't clear it for us
+		try {
+			unlinkSync(SOCK_PATH);
+		} catch {
+			/* no stale socket */
+		} // bun won't clear it for us
 		const server = createServer();
-		server.once("error", () => { try { unlinkSync(LOCK_PATH); } catch { /* gone */ } becomeOwnerLocalOnly(); });
+		server.once("error", () => {
+			try {
+				unlinkSync(LOCK_PATH);
+			} catch {
+				/* gone */
+			}
+			becomeOwnerLocalOnly();
+		});
 		server.listen(SOCK_PATH, () => becomeOwner(server));
 	};
 
@@ -430,19 +655,36 @@ export function createMainframe(): Mainframe {
 		// for the O_EXCL lock file, and the winner listens.
 		const probe = connect(SOCK_PATH);
 		const onErr = () => tryOwn();
-		probe.once("connect", () => { probe.removeListener("error", onErr); becomeClient(probe); });
+		probe.once("connect", () => {
+			probe.removeListener("error", onErr);
+			becomeClient(probe);
+		});
 		probe.once("error", onErr);
 	};
 
 	elect();
-	process.once("exit", () => { disposed = true; teardown(); });
+	process.once("exit", () => {
+		disposed = true;
+		teardown();
+	});
 
 	return {
 		warm: () => {}, // owner auto-warms on election; clients need no warming
-		start: () => { selfActive = true; role.start(); },
+		start: () => {
+			selfActive = true;
+			role.start();
+		},
 		poke: () => role.poke(),
-		stop: () => { selfActive = false; role.stop(); },
-		shutdown: () => { if (!disposed) { disposed = true; teardown(); } },
+		stop: () => {
+			selfActive = false;
+			role.stop();
+		},
+		shutdown: () => {
+			if (!disposed) {
+				disposed = true;
+				teardown();
+			}
+		},
 	};
 }
 
@@ -451,14 +693,27 @@ if (import.meta.main && isMainThread) {
 	const mode = process.argv[2] ?? "--audition";
 	if (mode === "--check") {
 		const b = synthBlip(Math.random);
-		console.assert(b.length > 0 && b.length <= Math.floor(SR * 0.07), "blip length");
-		console.assert(b.some((v) => v !== 0), "blip not silent");
-		console.assert(b.every((v) => v >= -32768 && v <= 32767), "blip in int16 range");
+		console.assert(
+			b.length > 0 && b.length <= Math.floor(SR * 0.07),
+			"blip length",
+		);
+		console.assert(
+			b.some((v) => v !== 0),
+			"blip not silent",
+		);
+		console.assert(
+			b.every((v) => v >= -32768 && v <= 32767),
+			"blip in int16 range",
+		);
 		const humOnly = createMixer([b], [synthAmbient(Math.random)], () => false);
 		const chunk = humOnly(4410);
 		console.assert(chunk.length === 8820, "mixer emits 2 bytes/sample");
-		console.assert(chunk.some((_, i) => i % 2 === 0 && chunk.readInt16LE(i) !== 0), "hum not silent when blips off");
-		if (!detectRawPlayer()) console.warn("no raw player found (pacat/pw-cat/ffplay/play)");
+		console.assert(
+			chunk.some((_, i) => i % 2 === 0 && chunk.readInt16LE(i) !== 0),
+			"hum not silent when blips off",
+		);
+		if (!detectRawPlayer())
+			console.warn("no raw player found (pacat/pw-cat/ffplay/play)");
 		console.log("ok");
 	} else if (mode === "--coord") {
 		// Multi-instance harness: `--coord 0:start,2000:stop,3000:quit`. Launch a few
@@ -484,7 +739,13 @@ if (import.meta.main && isMainThread) {
 		const poker = setInterval(() => {
 			if ((Date.now() / 1000) % 4 < 2) mf.poke(); // 2s blips, 2s hum-only, repeat
 		}, 80);
-		console.log(`auditioning ~${secs}s: mainframe hum + blip bursts (gaps = hum only)...`);
-		setTimeout(() => { clearInterval(poker); mf.stop(); process.exit(0); }, secs * 1000);
+		console.log(
+			`auditioning ~${secs}s: mainframe hum + blip bursts (gaps = hum only)...`,
+		);
+		setTimeout(() => {
+			clearInterval(poker);
+			mf.stop();
+			process.exit(0);
+		}, secs * 1000);
 	}
 }
