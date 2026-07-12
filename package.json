@@ -1,17 +1,11 @@
 {
-  "name": "popcorn-popper",
+  "name": "pi-computer-noises",
   "version": "1.0.0",
-  "description": "Agent ambience for pi and opencode: popcorn-popper (microwave drone + pops + ding) and computer-noises (retro mainframe hum + data blips). Each is a single shared instance across all agents.",
-  "keywords": ["pi-package", "opencode-plugin"],
+  "description": "Agent ambience for pi: retro mainframe hum + data blips while the agent thinks (70s/80s sci-fi console). One shared instance across all agents.",
+  "keywords": ["pi-package"],
   "type": "module",
   "license": "MIT",
-  "main": "./plugin/popcorn.ts",
-  "exports": {
-    ".": "./plugin/popcorn.ts",
-    "./popcorn": "./plugin/popcorn.ts",
-    "./computer-noises": "./plugin/computer-noises.ts"
-  },
-  "files": ["src", "extensions", "plugin", "assets", "README.md"],
+  "files": ["src", "extensions", "README.md"],
   "pi": {
     "extensions": ["extensions"]
   },
@@ -23,7 +17,6 @@
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "*",
-    "@opencode-ai/plugin": "*",
     "@types/node": "*"
   }
 }

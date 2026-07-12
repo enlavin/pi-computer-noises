@@ -6,7 +6,7 @@
 // then warm()/start()/poke()/stop() on their host's events. Same techniques as
 // popcorn-popper: one long-lived raw-PCM player fed by a real-time mixer on a
 // dedicated worker thread, warm between turns, drop-to-realtime, and ONE audio
-// owner per user (Unix socket + O_EXCL lock) so any number of pi/opencode
+// owner per user (Unix socket + O_EXCL lock) so any number of pi
 // instances share a single hum that stops when the last turn ends.
 //
 // Run directly to verify:
