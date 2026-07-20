@@ -22,7 +22,7 @@ silence when the last turn ends.
 ## Install on pi
 
 ```bash
-pi install git:github.com/<you>/pi-computer-noises
+pi install git:github.com/enlavin/pi-computer-noises
 # or local checkout:
 pi install /path/to/pi-computer-noises
 ```
