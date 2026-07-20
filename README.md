@@ -4,6 +4,8 @@
 while the agent thinks (70s/80s sci-fi console — WOPR, Star Trek). Fades to
 silence when the last turn ends.
 
+<img src="assets/certified-non-human-transparent-256px.png" width="256" alt="Certified Non-Human">
+
 ## How it sounds / works
 
 - All sound is synthesized in pure TypeScript. Blips are a near-uniform
@@ -18,8 +20,6 @@ silence when the last turn ends.
   audio owner (Unix socket + `O_EXCL` lock file) and refcount active turns —
   hum + blips play while ANY agent is working and stop when the LAST one
   finishes.
-
-<img src="assets/certified-non-human-transparent-256px.png" width="256" alt="Certified Non-Human">
 
 <a href="https://github.com/enlavin/pi-computer-noises/raw/refs/heads/main/assets/muthur6000.mp4">
   <img src="assets/muthur6000.png" width="600" alt="MU/TH/UR 6000 demo">
