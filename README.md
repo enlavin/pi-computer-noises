@@ -4,6 +4,8 @@
 while the agent thinks (70s/80s sci-fi console — WOPR, Star Trek). Fades to
 silence when the last turn ends.
 
+<img src="assets/certified-non-human-transparent-256px.png" width="256" alt="Certified Non-Human">
+
 ## How it sounds / works
 
 - All sound is synthesized in pure TypeScript. Blips are a near-uniform
