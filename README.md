@@ -45,4 +45,6 @@ Edit `src/mainframe.ts`: `SCALE` (blip pitches), `GAP_BASE`/`GAP_JITTER` (blip
 spacing), `HUM_LEVEL` (hum loudness), `WINDOW_MS` (how long blips linger after
 the last update).
 
+<audio controls src="assets/audition.mp3"></audio>
+
 Audition standalone: `bun src/mainframe.ts --audition 8`
