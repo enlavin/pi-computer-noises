@@ -5,6 +5,7 @@
   "keywords": ["pi-package"],
   "type": "module",
   "license": "MIT",
+  "author": "enlavin <github@enlavin.com>",
   "files": ["src", "extensions", "README.md"],
   "pi": {
     "extensions": ["extensions"]
