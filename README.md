@@ -21,7 +21,7 @@ silence when the last turn ends.
   hum + blips play while ANY agent is working and stop when the LAST one
   finishes.
 
-[![Watch the video](assets/muthur6000.png)](https://github.com/enlavin/pi-computer-noises/raw/refs/heads/main/assets/muthur6000.mp4)
+[![Watch the video](assets/muthur6000.png)](https://www.youtube.com/watch?v=5TTLmz347qY)
 
 ## Install on pi
 
