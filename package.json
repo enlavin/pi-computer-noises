@@ -1,6 +1,6 @@
 {
   "name": "@enlavin/pi-computer-noises",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Retro mainframe ambience for pi: hum + data blips while the agent thinks (70s/80s sci-fi console). One shared instance across all agents.",
   "keywords": [
     "pi-package",
@@ -30,13 +30,15 @@
   "author": "enlavin <github@enlavin.com>",
   "type": "module",
   "files": [
-    "src",
-    "extensions",
+    "dist",
     "assets",
     "README.md"
   ],
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "node scripts/build.mjs",
+    "prepare": "node scripts/build.mjs",
+    "prepublishOnly": "node scripts/build.mjs"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "*",
@@ -52,7 +54,7 @@
   },
   "pi": {
     "extensions": [
-      "extensions"
+      "dist/extensions"
     ]
   }
 }
