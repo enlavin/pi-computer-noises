@@ -1,6 +1,6 @@
 {
   "name": "@enlavin/pi-computer-noises",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Retro mainframe ambience for pi: hum + data blips while the agent thinks (70s/80s sci-fi console). One shared instance across all agents.",
   "keywords": [
     "pi-package",
