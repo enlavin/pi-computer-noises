@@ -1,12 +1,14 @@
 {
-  "name": "pi-computer-noises",
+  "name": "@enlavin/pi-computer-noises",
   "version": "1.0.0",
-  "description": "Agent ambience for pi: retro mainframe hum + data blips while the agent thinks (70s/80s sci-fi console). One shared instance across all agents.",
-  "keywords": ["pi-package"],
+  "description": "Retro mainframe ambience for pi: hum + data blips while the agent thinks (70s/80s sci-fi console). One shared instance across all agents.",
+  "keywords": ["pi-package", "pi", "pi-coding-agent", "pi-extension", "ai", "cli", "sound", "beeps", "terminal", "audio", "ambience", "retro", "mainframe", "synthesizer"],
   "type": "module",
   "license": "MIT",
   "author": "enlavin <github@enlavin.com>",
-  "files": ["src", "extensions", "README.md"],
+  "repository": "github:enlavin/pi-computer-noises",
+  "bugs": "https://github.com/enlavin/pi-computer-noises/issues",
+  "files": ["src", "extensions", "assets", "README.md"],
   "pi": {
     "extensions": ["extensions"]
   },
@@ -18,6 +20,6 @@
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "*",
-    "@types/node": "*"
+    "@types/node": "^22.0.0"
   }
 }
