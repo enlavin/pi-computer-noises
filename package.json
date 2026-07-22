@@ -2,24 +2,57 @@
   "name": "@enlavin/pi-computer-noises",
   "version": "1.0.0",
   "description": "Retro mainframe ambience for pi: hum + data blips while the agent thinks (70s/80s sci-fi console). One shared instance across all agents.",
-  "keywords": ["pi-package", "pi", "pi-coding-agent", "pi-extension", "ai", "cli", "sound", "beeps", "terminal", "audio", "ambience", "retro", "mainframe", "synthesizer"],
-  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "pi-extension",
+    "ai",
+    "cli",
+    "sounds",
+    "beeps",
+    "terminal",
+    "audio",
+    "ambience",
+    "retro",
+    "mainframe",
+    "synthesizer"
+  ],
+  "homepage": "https://github.com/enlavin/pi-computer-noises#readme",
+  "bugs": {
+    "url": "https://github.com/enlavin/pi-computer-noises/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/enlavin/pi-computer-noises.git"
+  },
   "license": "MIT",
   "author": "enlavin <github@enlavin.com>",
-  "repository": "github:enlavin/pi-computer-noises",
-  "bugs": "https://github.com/enlavin/pi-computer-noises/issues",
-  "files": ["src", "extensions", "assets", "README.md"],
-  "pi": {
-    "extensions": ["extensions"]
+  "type": "module",
+  "files": [
+    "src",
+    "extensions",
+    "assets",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@types/node": "^22.0.0"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
   },
   "peerDependenciesMeta": {
-    "@earendil-works/pi-coding-agent": { "optional": true }
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
   },
-  "devDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
-    "@types/node": "^22.0.0"
+  "pi": {
+    "extensions": [
+      "extensions"
+    ]
   }
 }
