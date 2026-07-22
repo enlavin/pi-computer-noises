@@ -27,6 +27,9 @@
     "url": "git+https://github.com/enlavin/pi-computer-noises.git"
   },
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "author": "enlavin <github@enlavin.com>",
   "type": "module",
   "files": [
