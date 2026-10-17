@@ -11,10 +11,11 @@ import { createMainframe, THEME_NAMES, themeName } from "../src/mainframe.ts";
 
 interface Config {
 	sound: boolean;
+	hum: boolean;
 	theme: string;
 }
 
-const DEFAULTS: Config = { sound: true, theme: "space" };
+const DEFAULTS: Config = { sound: true, hum: true, theme: "space" };
 
 // Status-bar icon per theme; shell/command lines stay plain names.
 const THEME_ICONS: Record<string, string> = {
@@ -34,6 +35,7 @@ function loadConfig(): Config {
 		const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<Config>;
 		return {
 			sound: typeof raw.sound === "boolean" ? raw.sound : DEFAULTS.sound,
+			hum: typeof raw.hum === "boolean" ? raw.hum : DEFAULTS.hum,
 			theme: themeName(raw.theme) ?? DEFAULTS.theme,
 		};
 	} catch {
@@ -71,12 +73,13 @@ function parseTheme(raw: string): { name: string } | { error: string } {
 }
 
 function describe(config: Config): string {
-	return `sound ${config.sound ? "on" : "off"} · theme ${config.theme}`;
+	return `sound ${config.sound ? "on" : "off"} · hum ${config.hum ? "on" : "off"} · theme ${config.theme}`;
 }
 
 function usage(): string {
 	return [
-		"Usage: /computer-noises [sound on|off|toggle] | [theme <name>] | status",
+		"Usage: /computer-noises [sound on|off|toggle] | [hum on|off|toggle] | [theme <name>] | status",
+		"sound mutes everything; hum only silences the idle drone (blips keep playing)",
 		`Themes: ${THEME_NAMES.join(", ")}`,
 	].join("\n");
 }
@@ -95,6 +98,7 @@ export default function (pi: ExtensionAPI) {
 	const refresh = (): Config => {
 		const disk = loadConfig();
 		config.sound = disk.sound;
+		config.hum = disk.hum;
 		config.theme = envTheme ?? disk.theme;
 		return config;
 	};
@@ -102,27 +106,31 @@ export default function (pi: ExtensionAPI) {
 	// Apply settings before any audio plays.
 	if (config.theme !== DEFAULT_THEME) mf.setTheme(config.theme);
 	mf.muted(!config.sound);
+	mf.hum(config.hum);
 	mf.warm();
 	mf.start(); // hum from the very start, stays on until shutdown
 
 	const apply = (next: Config, ctx: ExtensionCommandContext) => {
 		mf.setTheme(next.theme);
 		mf.muted(!next.sound);
+		mf.hum(next.hum);
 		config.theme = next.theme;
 		config.sound = next.sound;
+		config.hum = next.hum;
 		saveConfig(config);
 		updateStatus(ctx);
 	};
 
 	// Last UI context seen, so the shared-state listener can redraw the status of
-	// this instance when ANOTHER pi changes the theme or mutes the sound.
+	// this instance when ANOTHER pi changes the theme, mutes the sound, or
+	// switches the hum.
 	let activeCtx: { ui: ExtensionContext["ui"] } | undefined;
 	let rendered = "";
 
 	const renderStatus = (ctx: { ui: ExtensionCommandContext["ui"] } | undefined) => {
 		if (!ctx?.ui) return;
 		const line = config.sound
-			? `${THEME_ICONS[config.theme] ?? "♪"} ${config.theme}`
+			? `${THEME_ICONS[config.theme] ?? "♪"} ${config.theme}${config.hum ? "" : " · hum off"}`
 			: "🔇 off";
 		if (line === rendered) return;
 		rendered = line;
@@ -138,6 +146,7 @@ export default function (pi: ExtensionAPI) {
 	// this process's status line (and its poke gating) stays in sync.
 	mf.onSettingsChange((shared) => {
 		config.sound = !shared.muted;
+		config.hum = shared.hum;
 		config.theme = shared.theme;
 		updateStatus(activeCtx);
 	});
@@ -183,7 +192,14 @@ export default function (pi: ExtensionAPI) {
 			{
 				value: "toggle-sound",
 				label: `Sound: ${current.sound ? "on" : "off"}`,
-				description: current.sound ? "Mute the hum and all blips" : "Unmute",
+				description: current.sound ? "Mute everything: hum and all blips" : "Unmute",
+			},
+			{
+				value: "toggle-hum",
+				label: `Hum: ${current.hum ? "on" : "off"}`,
+				description: current.hum
+					? "Silence the idle drone; blips keep playing"
+					: "Bring the idle drone back",
 			},
 			{
 				value: "theme",
@@ -214,13 +230,17 @@ export default function (pi: ExtensionAPI) {
 			const next = refresh();
 			apply({ ...next, sound: !next.sound }, ctx);
 			ctx.ui.notify(`Sound ${config.sound ? "on" : "off"}`, "info");
+		} else if (result === "toggle-hum") {
+			const next = refresh();
+			apply({ ...next, hum: !next.hum }, ctx);
+			ctx.ui.notify(`Hum ${config.hum ? "on" : "off"}`, "info");
 		} else if (result === "theme") {
 			await pickTheme(ctx);
 		}
 	};
 
 	pi.registerCommand("computer-noises", {
-		description: "Mainframe sound: on/off and theme",
+		description: "Mainframe sound: on/off, hum, and theme",
 		handler: async (args, ctx) => {
 			const [sub, ...rest] = args.trim().split(/\s+/).filter(Boolean);
 			const value = rest[0]?.toLowerCase();
@@ -244,6 +264,22 @@ export default function (pi: ExtensionAPI) {
 					return;
 				}
 				ctx.ui.notify(`Sound ${config.sound ? "on" : "off"}`, "info");
+				return;
+			}
+
+			if (sub === "hum" || sub === "humming") {
+				const current = refresh();
+				if (!value || value === "toggle") {
+					apply({ ...current, hum: !current.hum }, ctx);
+				} else if (["on", "true", "1", "enable"].includes(value)) {
+					apply({ ...current, hum: true }, ctx);
+				} else if (["off", "false", "0", "disable"].includes(value)) {
+					apply({ ...current, hum: false }, ctx);
+				} else {
+					ctx.ui.notify(`Expected on or off, got "${rest[0]}".`, "error");
+					return;
+				}
+				ctx.ui.notify(`Hum ${config.hum ? "on" : "off"}`, "info");
 				return;
 			}
 

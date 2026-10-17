@@ -14,7 +14,8 @@ silence when the last turn ends.
   400-1600Hz. The hum bed is a 60Hz mains stack plus the low-mid partials
   (46/69/139/262/294/370Hz) and two filtered-noise beds that give it a dense
   20-400Hz body. Sparse ambient server-room beeps play over the hum even
-  between turns.
+  between turns. The hum bed can be switched off on its own (`hum off`): blips
+  keep playing, the idle drone (and its ambient beeps) goes quiet.
 - The spectral balance is tuned for a dense 70s/80s console texture:
   per-octave weight sits in 400-1600Hz, the hum carries a 20-400Hz body, and
   there is little of consequence above ~2.6kHz. 13dB crest factor.
@@ -36,22 +37,30 @@ bare 60/120/180Hz mains drone.
 Switch at runtime with the `/computer-noises` command:
 
 ```
-/computer-noises                     # interactive menu (sound + theme)
+/computer-noises                     # interactive menu (sound + hum + theme)
 /computer-noises sound on|off        # mute or unmute everything
 /computer-noises sound              # toggle
+/computer-noises hum on|off         # silence just the idle drone
+/computer-noises hum                # toggle the idle drone
 /computer-noises theme robot        # switch theme directly
 /computer-noises theme              # theme picker
 /computer-noises status             # what is active right now
 ```
 
+`hum off` only removes the idle bed (the hum tone stack plus its sparse ambient
+server-room beeps): data blips still stream while the agent works, and the idle
+between turns is silent. `sound off` mutes everything, hum included.
+
 `theme default` and `theme space` are the same theme. The old names still work
 as aliases: `reference` → `space`, `classic`/`legacy`/`old` → `robot`. The status
-bar shows the active theme as an emoji (`🚀 space`, `🤖 robot`, `🔇 off`); the
-command line takes plain names. Settings persist to `<agent-dir>/computer-noises.json`
+bar shows the active theme as an emoji (`🚀 space`, `🤖 robot`, `🔇 off`, plus
+`· hum off` while only the hum is switched off); the command line takes plain
+names. Settings persist to `<agent-dir>/computer-noises.json`
 (`~/.pi/agent/computer-noises.json` by default) and are shared by every pi
-instance: `sound off` silences the shared hum and all instances' blips, and a
-theme switch applies to the elected audio owner for everyone (the player is
-respawned, so a brief gap is expected).
+instance: `sound off` silences the shared hum and all instances' blips, `hum
+off` removes the shared idle drone while leaving blips on, and a theme switch
+applies to the elected audio owner for everyone (the player is respawned, so a
+brief gap is expected).
 
 Environment still works and seeds the startup theme. `CN_AUDIO_THEME`, when
 set, wins over the persisted one for that process, but the elected audio owner

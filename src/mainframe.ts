@@ -204,11 +204,14 @@ const GAP_JITTER = 12; // +/- spread
 // Mixer renders a continuous mainframe hum every chunk, plus data blips only
 // while blipsOn() is true. The hum fills the silence gaps (post-request wait,
 // between blip windows, tool waits); blips overlay during active streaming.
+// humOn() gates the hum bed and its ambient beeps only: blips keep playing, so
+// "hum off" means a quiet idle instead of a fully muted console.
 function createMixer(
 	theme: Theme,
 	blips: Int16Array[],
 	ambients: Int16Array[],
 	blipsOn: () => boolean,
+	humOn: () => boolean,
 ): (n: number) => Buffer {
 	let pos = 0;
 	let nextOnset = 0;
@@ -244,10 +247,11 @@ function createMixer(
 	return (n: number): Buffer => {
 		const end = pos + n;
 		const acc = new Float64Array(n);
+		const hum = humOn();
 
 		// mainframe hum: partial stack + noise beds under a slow LFO.
 		// Phase accumulators persist across chunks, so chunk edges never click.
-		for (let i = 0; i < n; i++) {
+		for (let i = 0; hum && i < n; i++) {
 			const t = (pos + i) / SR;
 			let tone = 0;
 			for (let p = 0; p < humW.length; p++) {
@@ -290,13 +294,19 @@ function createMixer(
 		} else {
 			nextOnset = end;
 		}
-		// ambient server-room beeps: sparse + faint, always on with the hum
-		while (nextAmbient < end) {
-			active.push({
-				s: ambients[Math.floor(Math.random() * ambients.length)],
-				start: Math.round(nextAmbient),
-			});
-			nextAmbient += ambientGap();
+		// ambient server-room beeps: sparse + faint, part of the hum bed (they
+		// are not data blips, so they follow the hum switch). Skip ahead when off
+		// so re-enabling doesn't fire a backlog of ambient onsets at once.
+		if (hum) {
+			while (nextAmbient < end) {
+				active.push({
+					s: ambients[Math.floor(Math.random() * ambients.length)],
+					start: Math.round(nextAmbient),
+				});
+				nextAmbient += ambientGap();
+			}
+		} else {
+			nextAmbient = end;
 		}
 		for (const p of active) {
 			const st = Math.max(pos, p.start);
@@ -398,6 +408,8 @@ interface Mainframe {
 	stop(): void;
 	/** Mute/unmute the shared hum and every instance's blips. */
 	muted(next: boolean): void;
+	/** Enable/disable the shared idle hum bed (and its ambient beeps) only. */
+	hum(next: boolean): void;
 	/** Switch the shared sound world (aliases accepted, unknown names ignored). */
 	setTheme(name: string): void;
 	/** Canonical name of the theme this instance is using. */
@@ -406,9 +418,11 @@ interface Mainframe {
 	isMuted(): boolean;
 	/**
 	 * Observe shared settings changed by any other instance. Fired on this
-	 * process whenever the elected owner broadcasts a new theme or mute state.
+	 * process whenever the elected owner broadcasts a new theme, mute or hum state.
 	 */
-	onSettingsChange(cb: (s: { muted: boolean; theme: ThemeName }) => void): void;
+	onSettingsChange(
+		cb: (s: { muted: boolean; hum: boolean; theme: ThemeName }) => void,
+	): void;
 	shutdown(): void;
 }
 
@@ -423,6 +437,8 @@ interface PumpEngine {
 	poke(): void;
 	/** Mute/unmute the shared hum and every instance's blips. */
 	muted(next: boolean): void;
+	/** Enable/disable the idle hum bed only; blips are unaffected. */
+	hum(next: boolean): void;
 	/** Switch sound world; the player is respawned to rebuild the mixer. */
 	setTheme(name: ThemeName): void;
 	shutdown(): void;
@@ -439,6 +455,7 @@ function createPumpEngine(): PumpEngine {
 	let running = false; // tick loop alive → RDP stream stays open (warm)
 	let on = false; // this turn is live → render hum+blips, else silence
 	let silent = false; // master mute: render silence even while a turn is live
+	let humOff = false; // idle hum bed disabled: blips only, silence between them
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let blipsUntil = 0; // wall-clock ms; blips render while Date.now() < this
 	let mix: ((n: number) => Buffer) | undefined; // rebuilt per player spawn
@@ -463,7 +480,13 @@ function createPumpEngine(): PumpEngine {
 		proc.stdin.on("error", () => {}); // ignore EPIPE if the player dies
 		stream = proc;
 		running = true;
-		mix = createMixer(THEME, blips, ambients, () => Date.now() < blipsUntil);
+		mix = createMixer(
+			THEME,
+			blips,
+			ambients,
+			() => Date.now() < blipsUntil,
+			() => !humOff,
+		);
 		// Small LEAD ahead of real time, topped up every 10ms. On a dedicated worker
 		// loop this stays glitch-free low; LEAD is the onset floor and the variance.
 		const LEAD = Math.floor(SR * 0.1);
@@ -517,6 +540,9 @@ function createPumpEngine(): PumpEngine {
 		muted(next: boolean) {
 			silent = next;
 			if (next) blipsUntil = 0;
+		},
+		hum(next: boolean) {
+			humOff = !next;
 		},
 		setTheme(name: ThemeName) {
 			if (name !== THEME_NAME) {
@@ -580,6 +606,8 @@ if (!isMainThread && parentPort) {
 		else if (m === "stop") engine.active(false);
 		else if (m === "mute") engine.muted(true);
 		else if (m === "unmute") engine.muted(false);
+		else if (m === "hum") engine.hum(true);
+		else if (m === "nohum") engine.hum(false);
 		else if (m.startsWith("theme:")) {
 			const name = themeName(m.slice(6));
 			if (name) engine.setTheme(name);
@@ -594,7 +622,7 @@ if (!isMainThread && parentPort) {
 // Mainframe wrapper, which tracks the user's choice across elections.
 type LocalPump = Pick<
 	Mainframe,
-	"warm" | "start" | "poke" | "stop" | "muted" | "setTheme" | "shutdown"
+	"warm" | "start" | "poke" | "stop" | "muted" | "hum" | "setTheme" | "shutdown"
 >;
 
 function createLocalPump(): LocalPump {
@@ -626,6 +654,7 @@ function createLocalPump(): LocalPump {
 			poke: () => post("poke"),
 			stop: () => post("stop"),
 			muted: (next) => post(next ? "mute" : "unmute"),
+			hum: (next) => post(next ? "hum" : "nohum"),
 			setTheme: (name) => post(`theme:${name}`),
 			shutdown: () => post("shutdown"),
 		};
@@ -638,6 +667,7 @@ function createLocalPump(): LocalPump {
 		poke: () => engine.poke(),
 		stop: () => engine.active(false),
 		muted: (next) => engine.muted(next),
+		hum: (next) => engine.hum(next),
 		setTheme: (name) => {
 			const canonical = themeName(name);
 			if (canonical) engine.setTheme(canonical);
@@ -667,26 +697,39 @@ export function createMainframe(): Mainframe {
 	// Local mirror of the shared settings, replayed to whichever pump this
 	// instance ends up driving (owner, client, or private fallback).
 	let mutedNow = false;
+	let humNow = true;
 	let themeNow: ThemeName | undefined;
 	let role: {
 		start(): void;
 		poke(): void;
 		stop(): void;
 		muted(next: boolean): void;
+		hum(next: boolean): void;
 		theme(name: ThemeName): void;
 	} = {
 		start() {},
 		poke() {},
 		stop() {},
 		muted() {},
+		hum() {},
 		theme() {},
 	};
 	let teardown = () => {};
 	// Change listeners registered through onSettingsChange(): the owner fires
 	// them for changes made by clients, clients fire them for owner broadcasts.
-	const listeners = new Set<(s: { muted: boolean; theme: ThemeName }) => void>();
+	const listeners = new Set<
+		(s: { muted: boolean; hum: boolean; theme: ThemeName }) => void
+	>();
 	const localSettings = () => {
-		const snapshot = { muted: mutedNow, theme: themeNow ?? THEME_NAME };
+		const snapshot = {
+			muted: mutedNow,
+			hum: humNow,
+			theme: themeNow ?? THEME_NAME,
+		};
+		if (process.env.CN_DEBUG)
+			console.error(
+				`[settings] muted=${snapshot.muted} hum=${snapshot.hum} theme=${snapshot.theme}`,
+			);
 		for (const cb of listeners) {
 			try {
 				cb(snapshot);
@@ -704,8 +747,9 @@ export function createMainframe(): Mainframe {
 		if (themeNow) pump.setTheme(themeNow);
 		// On election the pump adopts this instance's last known settings. The
 		// caller seeds them from the config file before start(), so a fresh owner
-		// never resets the shared mute/theme to its own defaults.
+		// never resets the shared mute/hum/theme to its own defaults.
 		pump.muted(mutedNow);
+		pump.hum(humNow);
 		if (process.env.CN_DEBUG)
 			console.error(`[owner] elected pid=${process.pid}`);
 		const conns = new Set<Socket>();
@@ -721,7 +765,11 @@ export function createMainframe(): Mainframe {
 			}
 		};
 		const settingsLine = () =>
-			`config:${JSON.stringify({ muted: mutedNow, theme: themeNow ?? THEME_NAME })}`;
+			`config:${JSON.stringify({
+				muted: mutedNow,
+				hum: humNow,
+				theme: themeNow ?? THEME_NAME,
+			})}`;
 		server.on("connection", (sock: Socket) => {
 			conns.add(sock);
 			let cactive = false;
@@ -770,6 +818,14 @@ export function createMainframe(): Mainframe {
 						if (next !== mutedNow) {
 							mutedNow = next;
 							pump.muted(next);
+							localSettings();
+							broadcast(settingsLine());
+						}
+					} else if (m === "hum" || m === "nohum") {
+						const next = m === "hum";
+						if (next !== humNow) {
+							humNow = next;
+							pump.hum(next);
 							localSettings();
 							broadcast(settingsLine());
 						}
@@ -823,6 +879,12 @@ export function createMainframe(): Mainframe {
 				broadcast(settingsLine());
 				localSettings();
 			},
+			hum: (next) => {
+				humNow = next;
+				pump.hum(next);
+				broadcast(settingsLine());
+				localSettings();
+			},
 			theme: (name) => {
 				themeNow = name;
 				pump.setTheme(name);
@@ -873,12 +935,14 @@ export function createMainframe(): Mainframe {
 			stop: () => send("stop"),
 			poke: () => send("poke"),
 			muted: (next) => send(next ? "mute" : "unmute"),
+			hum: (next) => send(next ? "hum" : "nohum"),
 			theme: (name) => send(`theme:${name}`),
 		};
 		// Re-assert this instance's settings so a stale owner catches up. Send the
 		// state explicitly either way: an election may have happened in between and
-		// the new owner must not inherit a stale mute.
+		// the new owner must not inherit a stale mute or hum switch.
 		send(mutedNow ? "mute" : "unmute");
+		send(humNow ? "hum" : "nohum");
 		if (themeNow) send(`theme:${themeNow}`);
 		// Inbound: the owner broadcasts the shared settings whenever any instance
 		// changes them, plus once on connect. Adopt them and tell the UI.
@@ -894,9 +958,11 @@ export function createMainframe(): Mainframe {
 				try {
 					const parsed = JSON.parse(line.slice(7)) as {
 						muted?: boolean;
+						hum?: boolean;
 						theme?: string;
 					};
 					if (typeof parsed.muted === "boolean") mutedNow = parsed.muted;
+					if (typeof parsed.hum === "boolean") humNow = parsed.hum;
 					const name = themeName(parsed.theme);
 					if (name) themeNow = name;
 					localSettings();
@@ -919,6 +985,7 @@ export function createMainframe(): Mainframe {
 				poke() {},
 				stop() {},
 				muted() {},
+				hum() {},
 				theme() {},
 			}; // silent until re-elected
 			setTimeout(elect, 40 + Math.random() * 80); // jitter to avoid a thundering herd
@@ -933,6 +1000,7 @@ export function createMainframe(): Mainframe {
 		const pump = createLocalPump();
 		if (themeNow) pump.setTheme(themeNow);
 		pump.muted(mutedNow);
+		pump.hum(humNow);
 		pump.warm();
 		if (selfActive) pump.start();
 		role = {
@@ -942,6 +1010,10 @@ export function createMainframe(): Mainframe {
 			muted: (next) => {
 				mutedNow = next;
 				pump.muted(next);
+			},
+			hum: (next) => {
+				humNow = next;
+				pump.hum(next);
 			},
 			theme: (name) => {
 				themeNow = name;
@@ -1033,6 +1105,10 @@ export function createMainframe(): Mainframe {
 			mutedNow = next;
 			role.muted(next);
 		},
+		hum: (next) => {
+			humNow = next;
+			role.hum(next);
+		},
 		setTheme: (name) => {
 			const canonical = themeName(name);
 			if (!canonical) return;
@@ -1079,12 +1155,30 @@ if (import.meta.main && isMainThread) {
 			b.every((v) => v >= -32768 && v <= 32767),
 			"blip in int16 range",
 		);
-		const humOnly = createMixer(THEME, [b], [synthAmbient(THEME, Math.random)], () => false);
+		const humOnly = createMixer(
+			THEME,
+			[b],
+			[synthAmbient(THEME, Math.random)],
+			() => false,
+			() => true,
+		);
 		const chunk = humOnly(4410);
 		console.assert(chunk.length === 8820, "mixer emits 2 bytes/sample");
 		console.assert(
 			chunk.some((_, i) => i % 2 === 0 && chunk.readInt16LE(i) !== 0),
 			"hum not silent when blips off",
+		);
+		const noHum = createMixer(
+			THEME,
+			[b],
+			[synthAmbient(THEME, Math.random)],
+			() => false,
+			() => false,
+		);
+		const silentChunk = noHum(4410);
+		console.assert(
+			silentChunk.every((v) => v === 0),
+			"hum off renders silence",
 		);
 		if (!detectRawPlayer())
 			console.warn("no raw player found (pacat/pw-cat/ffplay/play)");
@@ -1098,7 +1192,7 @@ if (import.meta.main && isMainThread) {
 		const as = Array.from({ length: THEME.ambientScale.length }, () =>
 			synthAmbient(THEME, Math.random),
 		);
-		const mix = createMixer(THEME, bs, as, () => on);
+		const mix = createMixer(THEME, bs, as, () => on, () => true);
 		const step = Math.floor(SR * 0.05);
 		for (let s = 0; s < secs * SR; s += step)
 			process.stdout.write(mix(step));
@@ -1114,6 +1208,8 @@ if (import.meta.main && isMainThread) {
 				if (cmd === "start") mf.start();
 				else if (cmd === "poke") mf.poke();
 				else if (cmd === "stop") mf.stop();
+				else if (cmd === "hum") mf.hum(true);
+				else if (cmd === "nohum") mf.hum(false);
 				else if (cmd === "quit") process.exit(0);
 			}, Number(ms));
 		}
