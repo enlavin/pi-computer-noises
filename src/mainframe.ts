@@ -2,6 +2,12 @@
 // streamed while the agent works — text/data scrolling across a 70s/80s sci-fi
 // CRT (WOPR, Star Trek console), over a low mainframe hum bed.
 //
+// The spectral balance is tuned for a dense machine texture: energy in
+// 400-1600Hz, a 20-400Hz low-mid body, little above ~2.6kHz. `--render` below
+// is the harness used to check per-band energies. CN_AUDIO_THEME=classic (or
+// `--theme classic` for direct runs) switches back to the original high-beep
+// sound.
+//
 // Host-agnostic engine (only Node built-ins); adapters call createMainframe()
 // then warm()/start()/poke()/stop() on their host's events. Same techniques as
 // popcorn-popper: one long-lived raw-PCM player fed by a real-time mixer on a
@@ -12,6 +18,8 @@
 // Run directly to verify:
 //   bun src/mainframe.ts --check       # assert synth/mixer math
 //   bun src/mainframe.ts --audition 8  # hear hum + blip bursts
+//   bun src/mainframe.ts --audition 8 --theme classic   # the original sound
+//   bun src/mainframe.ts --render 8 [--no-blips] > out.raw   # spectral regression
 //   bun src/mainframe.ts --coord 0:start,4000:stop,5000:quit   # multi-instance
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { isMainThread, parentPort, Worker } from "node:worker_threads";
@@ -23,16 +31,92 @@ import { join } from "node:path";
 const SR = 44100;
 const VARIANTS = 12;
 
-// Near-uniform pitch — all blips within a 20Hz-stepped band, Nostromo "Mother"
-// telemetry: a fast, relentless stream of nearly-identical high beeps.
-const SCALE = [1170, 1200, 1230, 1260, 1290];
+// ---- audio themes ----------------------------------------------------------
+// Two selectable sound worlds. CN_AUDIO_THEME picks one at startup; every pi
+// instance should use the same value, since the elected audio owner renders for
+// all of them.
+//   reference (default) — low-mid machine texture: 392-523Hz beeps with a
+//     strong octave, a 20-400Hz hum body, a 140-1400Hz chatter bed, nothing of
+//     consequence above ~2.6kHz.
+//   classic — the original sound: 1170-1290Hz telemetry beeps (fundamental +
+//     3rd + 5th) over a bare 60/120/180Hz mains drone.
+const THEMES = {
+	reference: {
+		// Near-uniform pitch, Nostromo "Mother" telemetry: a fast, relentless
+		// stream of nearly-identical beeps. The band sits low, so the beeps'
+		// harmonics land in the 800-1600Hz body instead of on top of it.
+		scale: [392, 415, 440, 466, 494, 523],
+		blipAmp: 0.075,
+		// Strong octave, weaker 3rd, fast rolloff: energy in 400-1600Hz.
+		partialAmps: [1, 0.75, 0.44, 0.18, 0.12, 0.06],
+		partialCutoff: 2600, // Hz; nothing above this is summed
+		// Sparse ambient server-room beeps: low-mid only, so they never poke
+		// above the ~2.6kHz ceiling.
+		ambientScale: [262, 311, 349, 392, 466, 587],
+		// 60Hz mains stack + low-mid partials that carry the 100-400Hz mass, so
+		// the hum has a body instead of a bare 60/120/180 drone.
+		humPartials: [
+			[46, 0.3],
+			[60, 0.45],
+			[69, 0.34],
+			[93, 0.26],
+			[120, 0.34],
+			[139, 0.32],
+			[180, 0.19],
+			[208, 0.22],
+			[240, 0.1],
+			[262, 0.34],
+			[294, 0.24],
+			[370, 0.11],
+		],
+		toneGain: 0.45,
+		bodyCutoff: 220, // machine body lowpass: 12dB/oct fill for 20-400Hz
+		bodyPoles: 2,
+		bodyLevel: 1.0,
+		chatterLevel: 1.5, // 140-1400Hz data-chatter bed inside the hum
+		humLevel: 0.042,
+	},
+	classic: {
+		scale: [1170, 1200, 1230, 1260, 1290],
+		blipAmp: 0.066,
+		partialAmps: [1, 0, 0.3, 0, 0.12], // fundamental + 3rd + 5th
+		partialCutoff: 24000, // no band limit: the 5th harmonic is intended
+		ambientScale: [523, 784, 1046, 1568, 2093, 2637],
+		humPartials: [
+			[60, 0.6],
+			[120, 0.3],
+			[180, 0.15],
+		],
+		toneGain: 0.5,
+		bodyCutoff: 140, // fan rumble: 6dB/oct
+		bodyPoles: 1,
+		bodyLevel: 1.6,
+		chatterLevel: 0, // no chatter bed
+		humLevel: 0.055,
+	},
+};
+
+type Theme = (typeof THEMES)[keyof typeof THEMES];
+
+function resolveTheme(raw: string | undefined): Theme {
+	const name = (raw ?? "").trim().toLowerCase();
+	if (!name || name === "reference" || name === "default")
+		return THEMES.reference;
+	if (name === "classic" || name === "legacy" || name === "old")
+		return THEMES.classic;
+	console.error(
+		`[computer-noises] unknown CN_AUDIO_THEME "${raw}" — using "reference" (valid: reference, classic)`,
+	);
+	return THEMES.reference;
+}
+
+let THEME = resolveTheme(process.env.CN_AUDIO_THEME);
 
 // ---- synthesis (pure TS) ---------------------------------------------------
-// A short, fairly flat electronic beep built additively from a fundamental plus
-// a few controlled harmonics (band-limited: all partials stay well under
-// Nyquist, so no waveshaper aliasing/crackle) with a fast attack and short
-// release fade — crisp and click-free in a stream. Shared by data blips and the
-// faint ambient server-room beeps.
+// A short electronic beep built additively from a fundamental plus the theme's
+// harmonic ladder, band-limited at the theme's cutoff (no aliasing). Fast attack
+// + short release fade keep the stream crisp and click-free. Shared by data
+// blips and the faint ambient server-room beeps.
 function normalize(out: Float64Array, amp: number): Int16Array {
 	let peak = 1e-9;
 	for (const v of out) if (Math.abs(v) > peak) peak = Math.abs(v);
@@ -45,14 +129,27 @@ function normalize(out: Float64Array, amp: number): Int16Array {
 	return pcm;
 }
 
-function synthTone(f: number, dur: number, amp: number): Int16Array {
+function synthTone(
+	theme: Theme,
+	f: number,
+	dur: number,
+	amp: number,
+): Int16Array {
 	const n = Math.floor(SR * dur);
 	const atk = Math.floor(SR * 0.002); // 2ms attack, no click
 	const fadeStart = n - Math.floor(SR * 0.004); // 4ms release fade
 	const out = new Float64Array(n);
+	const w: number[] = [];
+	const a: number[] = [];
+	const amps = theme.partialAmps;
+	for (let h = 1; h <= amps.length && f * h <= theme.partialCutoff; h++) {
+		if (amps[h - 1] === 0) continue;
+		w.push((2 * Math.PI * f * h) / SR);
+		a.push(amps[h - 1]);
+	}
 	for (let i = 0; i < n; i++) {
-		const w = 2 * Math.PI * f * (i / SR);
-		const s = Math.sin(w) + 0.3 * Math.sin(3 * w) + 0.12 * Math.sin(5 * w);
+		let s = 0;
+		for (let p = 0; p < w.length; p++) s += a[p] * Math.sin(w[p] * i);
 		const attack = i < atk ? i / atk : 1;
 		const fade = i > fadeStart ? (n - i) / (n - fadeStart) : 1;
 		out[i] = attack * fade * s;
@@ -60,20 +157,20 @@ function synthTone(f: number, dur: number, amp: number): Int16Array {
 	return normalize(out, amp);
 }
 
-// Data blips: bright, near-uniform pitch (SCALE), the streaming "processing" sound.
-function synthBlip(rand: () => number): Int16Array {
+// Data blips: near-uniform pitch (theme.scale), the streaming "processing" sound.
+function synthBlip(theme: Theme, rand: () => number): Int16Array {
 	return synthTone(
-		SCALE[Math.floor(rand() * SCALE.length)],
+		theme,
+		theme.scale[Math.floor(rand() * theme.scale.length)],
 		0.026 + rand() * 0.01,
-		0.066 + rand() * 0.01,
+		theme.blipAmp + rand() * 0.01,
 	);
 }
 
-// Ambient server-room beeps: sparse, faint, spread across octaves (different "devices").
-const AMBIENT_SCALE = [523, 784, 1046, 1568, 2093, 2637];
-function synthAmbient(rand: () => number): Int16Array {
+function synthAmbient(theme: Theme, rand: () => number): Int16Array {
 	return synthTone(
-		AMBIENT_SCALE[Math.floor(rand() * AMBIENT_SCALE.length)],
+		theme,
+		theme.ambientScale[Math.floor(rand() * theme.ambientScale.length)],
 		0.05 + rand() * 0.06,
 		0.014 + rand() * 0.01,
 	);
@@ -82,12 +179,12 @@ function synthAmbient(rand: () => number): Int16Array {
 // ---- timing: a stream of blips with occasional pauses ----------------------
 const GAP_BASE = 66; // ms between blips — a touch slower
 const GAP_JITTER = 12; // +/- spread
-const HUM_LEVEL = 0.055; // mainframe hum bed, sits just under the blips
 
 // Mixer renders a continuous mainframe hum every chunk, plus data blips only
 // while blipsOn() is true. The hum fills the silence gaps (post-request wait,
 // between blip windows, tool waits); blips overlay during active streaming.
 function createMixer(
+	theme: Theme,
 	blips: Int16Array[],
 	ambients: Int16Array[],
 	blipsOn: () => boolean,
@@ -95,8 +192,20 @@ function createMixer(
 	let pos = 0;
 	let nextOnset = 0;
 	let active: Array<{ s: Int16Array; start: number }> = [];
-	let lpNoise = 0; // fan-rumble lowpass state, continuous across chunks
-	const rumbleA = 1 - Math.exp((-2 * Math.PI * 140) / SR); // ~140Hz lowpass
+	// Hum bed noise state, continuous across chunks: a cascaded lowpass for the
+	// machine body rumble and a 140-1400Hz bandpass for the mid-band chatter.
+	const body = new Float64Array(theme.bodyPoles);
+	const chatOn = theme.chatterLevel > 0;
+	let chatHp = 0;
+	let chatX = 0;
+	let chatLp1 = 0;
+	let chatLp2 = 0;
+	const bodyA = 1 - Math.exp((-2 * Math.PI * theme.bodyCutoff) / SR);
+	const hpA = 1 / (1 + (2 * Math.PI * 140) / SR); // 140Hz one-pole highpass
+	const lpA = 1 - Math.exp((-2 * Math.PI * 1400) / SR); // 1400Hz pole, x2
+	const humW = theme.humPartials.map(([f]) => (2 * Math.PI * f) / SR);
+	const humA = theme.humPartials.map(([, a]) => a);
+	const humPh = new Float64Array(humW.length); // per-partial phase accumulator
 	const ambientGap = () => ((900 + Math.random() * 3200) / 1000) * SR; // 0.9-4.1s apart
 	let nextAmbient = ambientGap();
 
@@ -115,17 +224,38 @@ function createMixer(
 		const end = pos + n;
 		const acc = new Float64Array(n);
 
-		// mainframe hum: 60Hz mains + harmonics + lowpassed fan rumble + slow LFO.
-		// Phase-continuous (driven by absolute sample index) so chunks don't click.
+		// mainframe hum: partial stack + noise beds under a slow LFO.
+		// Phase accumulators persist across chunks, so chunk edges never click.
 		for (let i = 0; i < n; i++) {
 			const t = (pos + i) / SR;
-			const tone =
-				0.6 * Math.sin(2 * Math.PI * 60 * t) +
-				0.3 * Math.sin(2 * Math.PI * 120 * t) +
-				0.15 * Math.sin(2 * Math.PI * 180 * t);
-			lpNoise += rumbleA * (Math.random() * 2 - 1 - lpNoise);
+			let tone = 0;
+			for (let p = 0; p < humW.length; p++) {
+				tone += humA[p] * Math.sin(humPh[p]);
+				humPh[p] += humW[p];
+				if (humPh[p] > 2 * Math.PI) humPh[p] -= 2 * Math.PI;
+			}
+			const white = Math.random() * 2 - 1;
+			let bodyOut = white;
+			for (let p = 0; p < body.length; p++) {
+				body[p] += bodyA * (bodyOut - body[p]);
+				bodyOut = body[p];
+			}
+			let chatter = 0;
+			if (chatOn) {
+				chatHp = hpA * (chatHp + white - chatX); // 140Hz highpass
+				chatX = white;
+				chatLp1 += lpA * (chatHp - chatLp1);
+				chatLp2 += lpA * (chatLp1 - chatLp2); // 12dB/oct ceiling at 1400Hz
+				chatter = chatLp2 * theme.chatterLevel;
+			}
 			const lfo = 0.85 + 0.15 * Math.sin(2 * Math.PI * 0.22 * t);
-			acc[i] += (tone * 0.5 + lpNoise * 1.6) * lfo * HUM_LEVEL * 32767; // int16-scaled, like the blips
+			acc[i] +=
+				(tone * theme.toneGain +
+					bodyOut * theme.bodyLevel +
+					chatter) *
+				lfo *
+				theme.humLevel *
+				32767; // int16-scaled, like the blips
 		}
 
 		// data blips only while active; when off, skip ahead so onsets don't backlog
@@ -262,9 +392,9 @@ interface PumpEngine {
 
 function createPumpEngine(): PumpEngine {
 	const rawPlayer = detectRawPlayer();
-	const blips = Array.from({ length: VARIANTS }, () => synthBlip(Math.random));
-	const ambients = Array.from({ length: AMBIENT_SCALE.length }, () =>
-		synthAmbient(Math.random),
+	const blips = Array.from({ length: VARIANTS }, () => synthBlip(THEME, Math.random));
+	const ambients = Array.from({ length: THEME.ambientScale.length }, () =>
+		synthAmbient(THEME, Math.random),
 	);
 
 	let stream: ChildProcess | undefined;
@@ -293,7 +423,7 @@ function createPumpEngine(): PumpEngine {
 		proc.stdin.on("error", () => {}); // ignore EPIPE if the player dies
 		stream = proc;
 		running = true;
-		const mix = createMixer(blips, ambients, () => Date.now() < blipsUntil);
+		const mix = createMixer(THEME, blips, ambients, () => Date.now() < blipsUntil);
 		// Small LEAD ahead of real time, topped up every 10ms. On a dedicated worker
 		// loop this stays glitch-free low; LEAD is the onset floor and the variance.
 		const LEAD = Math.floor(SR * 0.1);
@@ -691,8 +821,13 @@ export function createMainframe(): Mainframe {
 // ---- direct-run: audition or self-check ------------------------------------
 if (import.meta.main && isMainThread) {
 	const mode = process.argv[2] ?? "--audition";
+	// `--theme classic` / `--theme reference` for direct runs; the extension
+	// itself reads CN_AUDIO_THEME instead.
+	const themeArg = process.argv.indexOf("--theme");
+	if (themeArg > 0 && process.argv[themeArg + 1])
+		THEME = resolveTheme(process.argv[themeArg + 1]);
 	if (mode === "--check") {
-		const b = synthBlip(Math.random);
+		const b = synthBlip(THEME, Math.random);
 		console.assert(
 			b.length > 0 && b.length <= Math.floor(SR * 0.07),
 			"blip length",
@@ -705,7 +840,7 @@ if (import.meta.main && isMainThread) {
 			b.every((v) => v >= -32768 && v <= 32767),
 			"blip in int16 range",
 		);
-		const humOnly = createMixer([b], [synthAmbient(Math.random)], () => false);
+		const humOnly = createMixer(THEME, [b], [synthAmbient(THEME, Math.random)], () => false);
 		const chunk = humOnly(4410);
 		console.assert(chunk.length === 8820, "mixer emits 2 bytes/sample");
 		console.assert(
@@ -715,6 +850,19 @@ if (import.meta.main && isMainThread) {
 		if (!detectRawPlayer())
 			console.warn("no raw player found (pacat/pw-cat/ffplay/play)");
 		console.log("ok");
+	} else if (mode === "--render") {
+		// Spectral regression harness: raw s16le mono to stdout, no player process.
+		// `bun src/mainframe.ts --render 8 [--no-blips] > out.raw`
+		const secs = Number(process.argv[3] ?? 8);
+		const on = process.argv[4] !== "--no-blips";
+		const bs = Array.from({ length: VARIANTS }, () => synthBlip(THEME, Math.random));
+		const as = Array.from({ length: THEME.ambientScale.length }, () =>
+			synthAmbient(THEME, Math.random),
+		);
+		const mix = createMixer(THEME, bs, as, () => on);
+		const step = Math.floor(SR * 0.05);
+		for (let s = 0; s < secs * SR; s += step)
+			process.stdout.write(mix(step));
 	} else if (mode === "--coord") {
 		// Multi-instance harness: `--coord 0:start,2000:stop,3000:quit`. Launch a few
 		// with CN_DEBUG=1 and watch that only one owner exists and active= tracks the
