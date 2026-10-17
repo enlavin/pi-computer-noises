@@ -97,20 +97,38 @@ const THEMES = {
 };
 
 type Theme = (typeof THEMES)[keyof typeof THEMES];
+type ThemeName = keyof typeof THEMES;
+
+// Alias -> canonical theme name. `default` is the user-facing spelling of
+// `reference`, since that is the name shown in `/computer-noises theme`.
+const THEME_ALIASES: Record<string, ThemeName> = {
+	reference: "reference",
+	default: "reference",
+	classic: "classic",
+	legacy: "classic",
+	old: "classic",
+};
+
+/** Canonical theme names, in menu order. */
+export const THEME_NAMES = Object.keys(THEMES) as ThemeName[];
+
+/** Resolve a theme name or alias; undefined when it names no known theme. */
+export function themeName(raw: string | undefined): ThemeName | undefined {
+	return THEME_ALIASES[(raw ?? "").trim().toLowerCase()];
+}
 
 function resolveTheme(raw: string | undefined): Theme {
-	const name = (raw ?? "").trim().toLowerCase();
-	if (!name || name === "reference" || name === "default")
-		return THEMES.reference;
-	if (name === "classic" || name === "legacy" || name === "old")
-		return THEMES.classic;
+	const name = themeName(raw);
+	if (name) return THEMES[name];
+	if (!raw || !raw.trim()) return THEMES.reference;
 	console.error(
-		`[computer-noises] unknown CN_AUDIO_THEME "${raw}" — using "reference" (valid: reference, classic)`,
+		`[computer-noises] unknown CN_AUDIO_THEME "${raw}" — using "reference" (valid: ${THEME_NAMES.join(", ")})`,
 	);
 	return THEMES.reference;
 }
 
 let THEME = resolveTheme(process.env.CN_AUDIO_THEME);
+let THEME_NAME: ThemeName = themeName(process.env.CN_AUDIO_THEME) ?? "reference";
 
 // ---- synthesis (pure TS) ---------------------------------------------------
 // A short electronic beep built additively from a fundamental plus the theme's
@@ -375,6 +393,12 @@ interface Mainframe {
 	start(): void;
 	poke(): void;
 	stop(): void;
+	/** Mute/unmute the shared hum and every instance's blips. */
+	muted(next: boolean): void;
+	/** Switch the shared sound world (aliases accepted, unknown names ignored). */
+	setTheme(name: string): void;
+	/** Canonical name of the theme this instance is using. */
+	theme(): ThemeName;
 	shutdown(): void;
 }
 
@@ -387,21 +411,27 @@ interface PumpEngine {
 	warm(): void;
 	active(on: boolean): void;
 	poke(): void;
+	/** Mute/unmute the shared hum and every instance's blips. */
+	muted(next: boolean): void;
+	/** Switch sound world; the player is respawned to rebuild the mixer. */
+	setTheme(name: ThemeName): void;
 	shutdown(): void;
 }
 
 function createPumpEngine(): PumpEngine {
 	const rawPlayer = detectRawPlayer();
-	const blips = Array.from({ length: VARIANTS }, () => synthBlip(THEME, Math.random));
-	const ambients = Array.from({ length: THEME.ambientScale.length }, () =>
+	let blips = Array.from({ length: VARIANTS }, () => synthBlip(THEME, Math.random));
+	let ambients = Array.from({ length: THEME.ambientScale.length }, () =>
 		synthAmbient(THEME, Math.random),
 	);
 
 	let stream: ChildProcess | undefined;
 	let running = false; // tick loop alive → RDP stream stays open (warm)
 	let on = false; // this turn is live → render hum+blips, else silence
+	let silent = false; // master mute: render silence even while a turn is live
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let blipsUntil = 0; // wall-clock ms; blips render while Date.now() < this
+	let mix: ((n: number) => Buffer) | undefined; // rebuilt per player spawn
 
 	// Keep ONE player alive for the whole session, feeding silence between turns.
 	// WSLg's RDPSink re-incurs a ~1-2s startup buffer every time a stream opens,
@@ -423,7 +453,7 @@ function createPumpEngine(): PumpEngine {
 		proc.stdin.on("error", () => {}); // ignore EPIPE if the player dies
 		stream = proc;
 		running = true;
-		const mix = createMixer(THEME, blips, ambients, () => Date.now() < blipsUntil);
+		mix = createMixer(THEME, blips, ambients, () => Date.now() < blipsUntil);
 		// Small LEAD ahead of real time, topped up every 10ms. On a dedicated worker
 		// loop this stays glitch-free low; LEAD is the onset floor and the variance.
 		const LEAD = Math.floor(SR * 0.1);
@@ -444,7 +474,8 @@ function createPumpEngine(): PumpEngine {
 				if (target - written > 2 * LEAD) written = target - LEAD;
 				while (running && written < target) {
 					const n = Math.min(STEP, target - written);
-					const ok = sin.write(on ? mix(n) : Buffer.alloc(n * 2)); // silence keeps stream warm
+					const live = on && !silent && mix !== undefined;
+					const ok = sin.write(live ? mix!(n) : Buffer.alloc(n * 2)); // silence keeps stream warm
 					written += n; // data is queued even when ok=false (over highWaterMark)
 					if (!ok) {
 						draining = true;
@@ -473,6 +504,38 @@ function createPumpEngine(): PumpEngine {
 		poke() {
 			blipsUntil = Date.now() + WINDOW_MS;
 		},
+		muted(next: boolean) {
+			silent = next;
+			if (next) blipsUntil = 0;
+		},
+		setTheme(name: ThemeName) {
+			if (name !== THEME_NAME) {
+				THEME_NAME = name;
+				THEME = THEMES[name];
+				blips = Array.from({ length: VARIANTS }, () => synthBlip(THEME, Math.random));
+				ambients = Array.from({ length: THEME.ambientScale.length }, () =>
+					synthAmbient(THEME, Math.random),
+				);
+			}
+			// The mixer closes over the old theme's variants and filters, so respawn
+			// the player: a brief gap is cheaper than live-swapping mixer state.
+			if (stream) {
+				running = false;
+				if (timer) {
+					clearTimeout(timer);
+					timer = undefined;
+				}
+				const old = stream;
+				stream = undefined;
+				try {
+					old.kill("SIGKILL");
+				} catch {
+					/* already gone */
+				}
+			}
+			mix = undefined;
+			spawnPlayer();
+		},
 		shutdown() {
 			running = false;
 			on = false;
@@ -489,6 +552,7 @@ function createPumpEngine(): PumpEngine {
 				}
 				stream = undefined;
 			}
+			mix = undefined;
 		},
 	};
 }
@@ -504,14 +568,23 @@ if (!isMainThread && parentPort) {
 		else if (m === "start") engine.active(true);
 		else if (m === "poke") engine.poke();
 		else if (m === "stop") engine.active(false);
-		else if (m === "shutdown") {
+		else if (m === "mute") engine.muted(true);
+		else if (m === "unmute") engine.muted(false);
+		else if (m.startsWith("theme:")) {
+			const name = themeName(m.slice(6));
+			if (name) engine.setTheme(name);
+		} else if (m === "shutdown") {
 			engine.shutdown();
 			process.exit(0);
 		}
 	});
 }
 
-function createLocalPump(): Mainframe {
+// The local pump drives audio for one process; the theme getter lives on the
+// Mainframe wrapper, which tracks the user's choice across elections.
+type LocalPump = Omit<Mainframe, "theme">;
+
+function createLocalPump(): LocalPump {
 	// Prefer a dedicated worker thread for the pump; fall back to in-process
 	// pacing if this runtime can't spawn one (audio then shares the main loop).
 	let worker: Worker | undefined;
@@ -539,6 +612,8 @@ function createLocalPump(): Mainframe {
 			start: () => post("start"),
 			poke: () => post("poke"),
 			stop: () => post("stop"),
+			muted: (next) => post(next ? "mute" : "unmute"),
+			setTheme: (name) => post(`theme:${name}`),
 			shutdown: () => post("shutdown"),
 		};
 	}
@@ -549,6 +624,11 @@ function createLocalPump(): Mainframe {
 		start: () => engine.active(true),
 		poke: () => engine.poke(),
 		stop: () => engine.active(false),
+		muted: (next) => engine.muted(next),
+		setTheme: (name) => {
+			const canonical = themeName(name);
+			if (canonical) engine.setTheme(canonical);
+		},
 		shutdown: () => engine.shutdown(),
 	};
 }
@@ -571,10 +651,22 @@ const LOCK_PATH = SOCK_PATH + ".lock";
 export function createMainframe(): Mainframe {
 	let selfActive = false; // is THIS instance mid-turn (source of truth across roles)
 	let disposed = false;
-	let role: { start(): void; poke(): void; stop(): void } = {
+	// Local mirror of the shared settings, replayed to whichever pump this
+	// instance ends up driving (owner, client, or private fallback).
+	let mutedNow = false;
+	let themeNow: ThemeName | undefined;
+	let role: {
+		start(): void;
+		poke(): void;
+		stop(): void;
+		muted(next: boolean): void;
+		theme(name: ThemeName): void;
+	} = {
 		start() {},
 		poke() {},
 		stop() {},
+		muted() {},
+		theme() {},
 	};
 	let teardown = () => {};
 
@@ -583,6 +675,11 @@ export function createMainframe(): Mainframe {
 		let activeCount = 0;
 		let selfCounted = false;
 		const apply = () => (activeCount > 0 ? pump.start() : pump.stop());
+		if (themeNow) pump.setTheme(themeNow);
+		// On election the pump adopts this instance's last known settings. The
+		// caller seeds them from the config file before start(), so a fresh owner
+		// never resets the shared mute/theme to its own defaults.
+		pump.muted(mutedNow);
 		if (process.env.CN_DEBUG)
 			console.error(`[owner] elected pid=${process.pid}`);
 		const conns = new Set<Socket>();
@@ -614,6 +711,16 @@ export function createMainframe(): Mainframe {
 								console.error(`[owner] active=${activeCount}`);
 						}
 					} else if (m === "poke") pump.poke();
+					else if (m.startsWith("theme:")) {
+						const name = themeName(m.slice(6));
+						if (name) {
+							themeNow = name;
+							pump.setTheme(name);
+						}
+					} else if (m === "mute" || m === "unmute") {
+						mutedNow = m === "mute";
+						pump.muted(mutedNow);
+					}
 				}
 			});
 			const drop = () => {
@@ -657,6 +764,14 @@ export function createMainframe(): Mainframe {
 				}
 			},
 			poke: () => pump.poke(),
+			muted: (next) => {
+				mutedNow = next;
+				pump.muted(next);
+			},
+			theme: (name) => {
+				themeNow = name;
+				pump.setTheme(name);
+			},
 		};
 		teardown = () => {
 			try {
@@ -700,7 +815,14 @@ export function createMainframe(): Mainframe {
 			start: () => send("start"),
 			stop: () => send("stop"),
 			poke: () => send("poke"),
+			muted: (next) => send(next ? "mute" : "unmute"),
+			theme: (name) => send(`theme:${name}`),
 		};
+		// Re-assert this instance's settings so a stale owner catches up. Send the
+		// state explicitly either way: an election may have happened in between and
+		// the new owner must not inherit a stale mute.
+		send(mutedNow ? "mute" : "unmute");
+		if (themeNow) send(`theme:${themeNow}`);
 		teardown = () => {
 			try {
 				sock.destroy();
@@ -710,7 +832,13 @@ export function createMainframe(): Mainframe {
 		};
 		const reElect = () => {
 			if (disposed) return;
-			role = { start() {}, poke() {}, stop() {} }; // silent until re-elected
+			role = {
+				start() {},
+				poke() {},
+				stop() {},
+				muted() {},
+				theme() {},
+			}; // silent until re-elected
 			setTimeout(elect, 40 + Math.random() * 80); // jitter to avoid a thundering herd
 		};
 		sock.on("close", reElect);
@@ -721,12 +849,22 @@ export function createMainframe(): Mainframe {
 	// (per-instance hum) rather than going silent.
 	const becomeOwnerLocalOnly = () => {
 		const pump = createLocalPump();
+		if (themeNow) pump.setTheme(themeNow);
+		pump.muted(mutedNow);
 		pump.warm();
 		if (selfActive) pump.start();
 		role = {
 			start: () => pump.start(),
 			stop: () => pump.stop(),
 			poke: () => pump.poke(),
+			muted: (next) => {
+				mutedNow = next;
+				pump.muted(next);
+			},
+			theme: (name) => {
+				themeNow = name;
+				pump.setTheme(name);
+			},
 		};
 		teardown = () => pump.shutdown();
 	};
@@ -809,6 +947,19 @@ export function createMainframe(): Mainframe {
 			selfActive = false;
 			role.stop();
 		},
+		muted: (next) => {
+			mutedNow = next;
+			role.muted(next);
+		},
+		setTheme: (name) => {
+			const canonical = themeName(name);
+			if (!canonical) return;
+			themeNow = canonical;
+			THEME_NAME = canonical;
+			THEME = THEMES[canonical];
+			role.theme(canonical);
+		},
+		theme: () => themeNow ?? THEME_NAME,
 		shutdown: () => {
 			if (!disposed) {
 				disposed = true;
@@ -824,8 +975,10 @@ if (import.meta.main && isMainThread) {
 	// `--theme classic` / `--theme reference` for direct runs; the extension
 	// itself reads CN_AUDIO_THEME instead.
 	const themeArg = process.argv.indexOf("--theme");
-	if (themeArg > 0 && process.argv[themeArg + 1])
+	if (themeArg > 0 && process.argv[themeArg + 1]) {
 		THEME = resolveTheme(process.argv[themeArg + 1]);
+		THEME_NAME = themeName(process.argv[themeArg + 1]) ?? "reference";
+	}
 	if (mode === "--check") {
 		const b = synthBlip(THEME, Math.random);
 		console.assert(
