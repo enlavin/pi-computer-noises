@@ -4,8 +4,8 @@
 //
 // The spectral balance is tuned for a dense machine texture: energy in
 // 400-1600Hz, a 20-400Hz low-mid body, little above ~2.6kHz. `--render` below
-// is the harness used to check per-band energies. CN_AUDIO_THEME=classic (or
-// `--theme classic` for direct runs) switches back to the original high-beep
+// is the harness used to check per-band energies. CN_AUDIO_THEME=robot (or
+// `--theme robot` for direct runs) switches back to the original high-beep
 // sound.
 //
 // Host-agnostic engine (only Node built-ins); adapters call createMainframe()
@@ -18,7 +18,7 @@
 // Run directly to verify:
 //   bun src/mainframe.ts --check       # assert synth/mixer math
 //   bun src/mainframe.ts --audition 8  # hear hum + blip bursts
-//   bun src/mainframe.ts --audition 8 --theme classic   # the original sound
+//   bun src/mainframe.ts --audition 8 --theme robot   # the original sound
 //   bun src/mainframe.ts --render 8 [--no-blips] > out.raw   # spectral regression
 //   bun src/mainframe.ts --coord 0:start,4000:stop,5000:quit   # multi-instance
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
@@ -35,13 +35,13 @@ const VARIANTS = 12;
 // Two selectable sound worlds. CN_AUDIO_THEME picks one at startup; every pi
 // instance should use the same value, since the elected audio owner renders for
 // all of them.
-//   reference (default) — low-mid machine texture: 392-523Hz beeps with a
+//   space (default) — low-mid machine texture: 392-523Hz beeps with a
 //     strong octave, a 20-400Hz hum body, a 140-1400Hz chatter bed, nothing of
 //     consequence above ~2.6kHz.
-//   classic — the original sound: 1170-1290Hz telemetry beeps (fundamental +
+//   robot — the original sound: 1170-1290Hz telemetry beeps (fundamental +
 //     3rd + 5th) over a bare 60/120/180Hz mains drone.
 const THEMES = {
-	reference: {
+	space: {
 		// Near-uniform pitch, Nostromo "Mother" telemetry: a fast, relentless
 		// stream of nearly-identical beeps. The band sits low, so the beeps'
 		// harmonics land in the 800-1600Hz body instead of on top of it.
@@ -76,7 +76,7 @@ const THEMES = {
 		chatterLevel: 1.5, // 140-1400Hz data-chatter bed inside the hum
 		humLevel: 0.042,
 	},
-	classic: {
+	robot: {
 		scale: [1170, 1200, 1230, 1260, 1290],
 		blipAmp: 0.066,
 		partialAmps: [1, 0, 0.3, 0, 0.12], // fundamental + 3rd + 5th
@@ -99,14 +99,17 @@ const THEMES = {
 type Theme = (typeof THEMES)[keyof typeof THEMES];
 type ThemeName = keyof typeof THEMES;
 
-// Alias -> canonical theme name. `default` is the user-facing spelling of
-// `reference`, since that is the name shown in `/computer-noises theme`.
+// Alias -> canonical theme name. The old names (reference, classic) are kept
+// as aliases so existing CN_AUDIO_THEME values and persisted configs keep
+// working; `default` is the user-facing spelling of the default theme.
 const THEME_ALIASES: Record<string, ThemeName> = {
-	reference: "reference",
-	default: "reference",
-	classic: "classic",
-	legacy: "classic",
-	old: "classic",
+	space: "space",
+	default: "space",
+	reference: "space",
+	robot: "robot",
+	classic: "robot",
+	legacy: "robot",
+	old: "robot",
 };
 
 /** Canonical theme names, in menu order. */
@@ -120,15 +123,15 @@ export function themeName(raw: string | undefined): ThemeName | undefined {
 function resolveTheme(raw: string | undefined): Theme {
 	const name = themeName(raw);
 	if (name) return THEMES[name];
-	if (!raw || !raw.trim()) return THEMES.reference;
+	if (!raw || !raw.trim()) return THEMES.space;
 	console.error(
-		`[computer-noises] unknown CN_AUDIO_THEME "${raw}" — using "reference" (valid: ${THEME_NAMES.join(", ")})`,
+		`[computer-noises] unknown CN_AUDIO_THEME "${raw}" — using "space" (valid: ${THEME_NAMES.join(", ")})`,
 	);
-	return THEMES.reference;
+	return THEMES.space;
 }
 
 let THEME = resolveTheme(process.env.CN_AUDIO_THEME);
-let THEME_NAME: ThemeName = themeName(process.env.CN_AUDIO_THEME) ?? "reference";
+let THEME_NAME: ThemeName = themeName(process.env.CN_AUDIO_THEME) ?? "space";
 
 // ---- synthesis (pure TS) ---------------------------------------------------
 // A short electronic beep built additively from a fundamental plus the theme's
@@ -399,6 +402,13 @@ interface Mainframe {
 	setTheme(name: string): void;
 	/** Canonical name of the theme this instance is using. */
 	theme(): ThemeName;
+	/** True while the shared hum/blips are muted. */
+	isMuted(): boolean;
+	/**
+	 * Observe shared settings changed by any other instance. Fired on this
+	 * process whenever the elected owner broadcasts a new theme or mute state.
+	 */
+	onSettingsChange(cb: (s: { muted: boolean; theme: ThemeName }) => void): void;
 	shutdown(): void;
 }
 
@@ -582,7 +592,10 @@ if (!isMainThread && parentPort) {
 
 // The local pump drives audio for one process; the theme getter lives on the
 // Mainframe wrapper, which tracks the user's choice across elections.
-type LocalPump = Omit<Mainframe, "theme">;
+type LocalPump = Pick<
+	Mainframe,
+	"warm" | "start" | "poke" | "stop" | "muted" | "setTheme" | "shutdown"
+>;
 
 function createLocalPump(): LocalPump {
 	// Prefer a dedicated worker thread for the pump; fall back to in-process
@@ -669,6 +682,19 @@ export function createMainframe(): Mainframe {
 		theme() {},
 	};
 	let teardown = () => {};
+	// Change listeners registered through onSettingsChange(): the owner fires
+	// them for changes made by clients, clients fire them for owner broadcasts.
+	const listeners = new Set<(s: { muted: boolean; theme: ThemeName }) => void>();
+	const localSettings = () => {
+		const snapshot = { muted: mutedNow, theme: themeNow ?? THEME_NAME };
+		for (const cb of listeners) {
+			try {
+				cb(snapshot);
+			} catch {
+				/* a bad listener must not break audio */
+			}
+		}
+	};
 
 	const becomeOwner = (server: Server) => {
 		const pump = createLocalPump();
@@ -683,11 +709,31 @@ export function createMainframe(): Mainframe {
 		if (process.env.CN_DEBUG)
 			console.error(`[owner] elected pid=${process.pid}`);
 		const conns = new Set<Socket>();
+		// The owner is the hub: whenever the shared settings change, every connected
+		// instance needs to know so its status line matches the sound it hears.
+		const broadcast = (line: string) => {
+			for (const s of conns) {
+				try {
+					s.write(line + "\n");
+				} catch {
+					/* peer gone; 'close' cleans up */
+				}
+			}
+		};
+		const settingsLine = () =>
+			`config:${JSON.stringify({ muted: mutedNow, theme: themeNow ?? THEME_NAME })}`;
 		server.on("connection", (sock: Socket) => {
 			conns.add(sock);
 			let cactive = false;
 			let buf = "";
 			sock.setEncoding("utf8");
+			// Tell a freshly connected instance the current shared settings, so a
+			// client that joined late renders the right status immediately.
+			try {
+				sock.write(settingsLine() + "\n");
+			} catch {
+				/* peer gone */
+			}
 			sock.on("data", (d: string) => {
 				buf += d;
 				let i: number;
@@ -713,13 +759,20 @@ export function createMainframe(): Mainframe {
 					} else if (m === "poke") pump.poke();
 					else if (m.startsWith("theme:")) {
 						const name = themeName(m.slice(6));
-						if (name) {
+						if (name && name !== themeNow) {
 							themeNow = name;
 							pump.setTheme(name);
+							localSettings();
+							broadcast(settingsLine());
 						}
 					} else if (m === "mute" || m === "unmute") {
-						mutedNow = m === "mute";
-						pump.muted(mutedNow);
+						const next = m === "mute";
+						if (next !== mutedNow) {
+							mutedNow = next;
+							pump.muted(next);
+							localSettings();
+							broadcast(settingsLine());
+						}
 					}
 				}
 			});
@@ -767,10 +820,14 @@ export function createMainframe(): Mainframe {
 			muted: (next) => {
 				mutedNow = next;
 				pump.muted(next);
+				broadcast(settingsLine());
+				localSettings();
 			},
 			theme: (name) => {
 				themeNow = name;
 				pump.setTheme(name);
+				broadcast(settingsLine());
+				localSettings();
 			},
 		};
 		teardown = () => {
@@ -823,6 +880,31 @@ export function createMainframe(): Mainframe {
 		// the new owner must not inherit a stale mute.
 		send(mutedNow ? "mute" : "unmute");
 		if (themeNow) send(`theme:${themeNow}`);
+		// Inbound: the owner broadcasts the shared settings whenever any instance
+		// changes them, plus once on connect. Adopt them and tell the UI.
+		let inbuf = "";
+		sock.setEncoding("utf8");
+		sock.on("data", (d: string) => {
+			inbuf += d;
+			let i: number;
+			while ((i = inbuf.indexOf("\n")) >= 0) {
+				const line = inbuf.slice(0, i);
+				inbuf = inbuf.slice(i + 1);
+				if (!line.startsWith("config:")) continue;
+				try {
+					const parsed = JSON.parse(line.slice(7)) as {
+						muted?: boolean;
+						theme?: string;
+					};
+					if (typeof parsed.muted === "boolean") mutedNow = parsed.muted;
+					const name = themeName(parsed.theme);
+					if (name) themeNow = name;
+					localSettings();
+				} catch {
+					/* ignore malformed broadcast */
+				}
+			}
+		});
 		teardown = () => {
 			try {
 				sock.destroy();
@@ -960,6 +1042,10 @@ export function createMainframe(): Mainframe {
 			role.theme(canonical);
 		},
 		theme: () => themeNow ?? THEME_NAME,
+		isMuted: () => mutedNow,
+		onSettingsChange: (cb) => {
+			listeners.add(cb);
+		},
 		shutdown: () => {
 			if (!disposed) {
 				disposed = true;
@@ -972,12 +1058,12 @@ export function createMainframe(): Mainframe {
 // ---- direct-run: audition or self-check ------------------------------------
 if (import.meta.main && isMainThread) {
 	const mode = process.argv[2] ?? "--audition";
-	// `--theme classic` / `--theme reference` for direct runs; the extension
+	// `--theme robot` / `--theme space` for direct runs; the extension
 	// itself reads CN_AUDIO_THEME instead.
 	const themeArg = process.argv.indexOf("--theme");
 	if (themeArg > 0 && process.argv[themeArg + 1]) {
 		THEME = resolveTheme(process.argv[themeArg + 1]);
-		THEME_NAME = themeName(process.argv[themeArg + 1]) ?? "reference";
+		THEME_NAME = themeName(process.argv[themeArg + 1]) ?? "space";
 	}
 	if (mode === "--check") {
 		const b = synthBlip(THEME, Math.random);

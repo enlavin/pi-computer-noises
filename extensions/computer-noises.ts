@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
+	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { DynamicBorder, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Container, type SelectItem, SelectList, Text } from "@earendil-works/pi-tui";
@@ -13,7 +14,13 @@ interface Config {
 	theme: string;
 }
 
-const DEFAULTS: Config = { sound: true, theme: "reference" };
+const DEFAULTS: Config = { sound: true, theme: "space" };
+
+// Status-bar icon per theme; shell/command lines stay plain names.
+const THEME_ICONS: Record<string, string> = {
+	space: "🚀",
+	robot: "🤖",
+};
 const DEFAULT_THEME = DEFAULTS.theme;
 
 function configPath(): string {
@@ -107,20 +114,40 @@ export default function (pi: ExtensionAPI) {
 		updateStatus(ctx);
 	};
 
-	const updateStatus = (ctx: { ui: ExtensionCommandContext["ui"] }) => {
-		if (!ctx.ui) return;
-		ctx.ui.setStatus(
-			"noises",
-			config.sound ? `♪ ${config.theme}` : "♪ off",
-		);
+	// Last UI context seen, so the shared-state listener can redraw the status of
+	// this instance when ANOTHER pi changes the theme or mutes the sound.
+	let activeCtx: { ui: ExtensionContext["ui"] } | undefined;
+	let rendered = "";
+
+	const renderStatus = (ctx: { ui: ExtensionCommandContext["ui"] } | undefined) => {
+		if (!ctx?.ui) return;
+		const line = config.sound
+			? `${THEME_ICONS[config.theme] ?? "♪"} ${config.theme}`
+			: "🔇 off";
+		if (line === rendered) return;
+		rendered = line;
+		ctx.ui.setStatus("noises", line);
 	};
+
+	const updateStatus = (ctx: { ui: ExtensionContext["ui"] } | undefined) => {
+		activeCtx = ctx ?? activeCtx;
+		renderStatus(activeCtx);
+	};
+
+	// The audio owner broadcasts shared settings to every instance; adopt them so
+	// this process's status line (and its poke gating) stays in sync.
+	mf.onSettingsChange((shared) => {
+		config.sound = !shared.muted;
+		config.theme = shared.theme;
+		updateStatus(activeCtx);
+	});
 
 	const themeItems = (): SelectItem[] =>
 		THEME_NAMES.map((name) => ({
 			value: name,
 			label: name === refresh().theme ? `${name} (active)` : name,
 			description:
-				name === "reference"
+				name === "space"
 					? "Low-mid mainframe texture (default)"
 					: "Original high telemetry beeps",
 		}));
@@ -246,6 +273,10 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_start", async (_event, ctx) => updateStatus(ctx));
+	pi.on("agent_start", async (_event, ctx) => {
+		refresh();
+		updateStatus(ctx);
+	});
 	pi.on("session_shutdown", async () => mf.shutdown());
 	pi.on("agent_start", async () => {
 		if (refresh().sound) mf.poke();

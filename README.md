@@ -29,7 +29,7 @@ silence when the last turn ends.
 
 ## Audio themes
 
-The default is `reference` (the sound above). `classic` restores the original
+The default is `space` (the sound above) 🚀. `robot` 🤖 restores the original
 original sound: 1170-1290Hz telemetry beeps (fundamental + 3rd + 5th) over a
 bare 60/120/180Hz mains drone.
 
@@ -39,13 +39,15 @@ Switch at runtime with the `/computer-noises` command:
 /computer-noises                     # interactive menu (sound + theme)
 /computer-noises sound on|off        # mute or unmute everything
 /computer-noises sound              # toggle
-/computer-noises theme classic      # switch theme directly
+/computer-noises theme robot        # switch theme directly
 /computer-noises theme              # theme picker
 /computer-noises status             # what is active right now
 ```
 
-`theme default` and `theme reference` are the same theme; `legacy` and `old`
-alias `classic`. Settings persist to `<agent-dir>/computer-noises.json`
+`theme default` and `theme space` are the same theme. The old names still work
+as aliases: `reference` → `space`, `classic`/`legacy`/`old` → `robot`. The status
+bar shows the active theme as an emoji (`🚀 space`, `🤖 robot`, `🔇 off`); the
+command line takes plain names. Settings persist to `<agent-dir>/computer-noises.json`
 (`~/.pi/agent/computer-noises.json` by default) and are shared by every pi
 instance: `sound off` silences the shared hum and all instances' blips, and a
 theme switch applies to the elected audio owner for everyone (the player is
@@ -57,15 +59,15 @@ renders for all instances, so a per-shell override only applies reliably when
 that shell owns the audio:
 
 ```bash
-CN_AUDIO_THEME=classic pi      # old sound
-CN_AUDIO_THEME=reference pi    # default
+CN_AUDIO_THEME=robot pi        # old sound
+CN_AUDIO_THEME=space pi        # default
 ```
 
-An unknown `CN_AUDIO_THEME` logs a warning and falls back to `reference`.
-Direct runs take `--theme classic|reference` instead:
+An unknown `CN_AUDIO_THEME` logs a warning and falls back to `space`.
+Direct runs take `--theme space|robot` instead:
 
 ```bash
-bun src/mainframe.ts --audition 8 --theme classic
+bun src/mainframe.ts --audition 8 --theme robot
 ```
 
 [![Watch the video](assets/muthur6000.png)](https://www.youtube.com/watch?v=TtGsqGcajjg)
